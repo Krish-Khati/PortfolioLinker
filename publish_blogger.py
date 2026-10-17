@@ -124,24 +124,25 @@ def build_request_body(post: dict[str, Any], image_url: str,
         raise SystemExit(f"[!] refusing to send unverified links: {audit['unknown_targets']}")
     if audit["link_count"] != 2:
         raise SystemExit(f"[!] body has {audit['link_count']} links, expected exactly 2")
-    if not publish_now:
-        state = "DRAFT"
-    else:
-        state = "LIVE" if config.publish_live() else "DRAFT"
-
     body: dict = {
         "title": post["title"],
         "content": body_html,
         # A Blogger draft is a full post payload anyway, so labels always ship.
         "labels": post.get("tags", [])[:5],
-        "status": state,
     }
-    # `published` is a datetime string in v3, not a bool - sending False is a
-    # 400 ("Invalid value at 'post.published' (TYPE_STRING), false"). Omitting
-    # the field entirely is what leaves a post as a draft; only a real publish
-    # sets it. The blog itself is identified by the blogId method parameter,
-    # not by a body field.
-    if state == "LIVE":
+    # Deliberately NOT setting "status" or "published" for a draft.
+    #
+    # `status` is read-only on this resource ("only set for admin-level
+    # requests") and posts.insert ignores it, so sending status=DRAFT is a
+    # silent no-op. `published` is a datetime string, not a bool, so False is a
+    # 400. And simply omitting `published` does NOT yield a draft - Blogger
+    # defaults it to now and the post goes straight to the public blog. That
+    # was a real bug here: a draft was created, returned status "LIVE" and was
+    # publicly reachable.
+    #
+    # Draft vs live is decided by the isDraft QUERY PARAMETER on the insert
+    # call, not by anything in this body.
+    if publish_now:
         body["published"] = datetime.now(timezone.utc).isoformat()
     return body
 
@@ -228,24 +229,57 @@ def main() -> int:
 
     # blogId is a method parameter, not a body field. posts.insert raises
     # TypeError("Missing required parameter") without it.
-    result = service.posts().insert(blogId=blog_id, body=body).execute()
+    #
+    # isDraft is the ONLY thing that decides draft vs live. It is a query
+    # parameter, not a body field - this is the mistake that once published an
+    # unreviewed draft to the public blog.
+    result = service.posts().insert(blogId=blog_id, body=body,
+                                    isDraft=not publish_now).execute()
     url = result.get("url", "")
-    state = result.get("status", "?")
+    post_id = result.get("id", "")
+    state = result.get("status") or "DRAFT"
 
-    print(f"[ok] Blogger returned: {result.get('id')} [{state}]")
-    print(f"     {url}")
+    # Post-condition. Never report success on a draft run without confirming
+    # Blogger agrees the post is a draft.
+    #
+    # Check `status`, NOT `published`: Blogger populates `published` with the
+    # current timestamp even on a real isDraft=true insert, so testing it
+    # rejects perfectly good drafts. As a second opinion, a live post has a
+    # permalink path, while a draft's url is just the blog root ("/").
+    from urllib.parse import urlparse
+
+    path = (urlparse(url).path or "/") if url else "/"
+    is_live = result.get("status") == "LIVE" or path not in ("/", "")
+    if not publish_now and is_live:
+        print("\n[!!] Blogger created the post as PUBLISHED despite "
+              "isDraft=true. Reverting to draft now.")
+        try:
+            service.posts().revert(blogId=blog_id, postId=post_id).execute()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!!] revert failed ({exc.__class__.__name__}). "
+                  f"DELETE IT BY HAND: post id {post_id}")
+        else:
+            print("[ok] reverted; it is a draft again.")
+        raise SystemExit(
+            f"[!] refused to report success: the post was briefly public.\n"
+            f"    Blogger post id: {post_id}\n"
+            f"    Check it in Blogger before doing anything else.")
+
+    print(f"\n[ok] Blogger returned: {post_id} [{state}]")
     if not publish_now:
-        print("\n     It is a DRAFT. Review it in Blogger, then publish there "
-              "or re-run with --publish.")
+        print("     No public URL yet - it is a DRAFT. Review it in Blogger,")
+        print("     then publish there or re-run with --publish.")
+    else:
+        print(f"     {url}")
 
     ledger.record({
         "topic": post.get("topic", ""),
         "title": post["title"],
         "slug": post["slug"],
         "url": url,
-        "blogger_post_id": result.get("id"),
+        "blogger_post_id": post_id,
         "backlinks": post["backlinks"],
-        "date": __import__("datetime").date.today().isoformat(),
+        "date": datetime.now(timezone.utc).date().isoformat(),
         "status": "published" if publish_now else "blogger-draft",
     })
     return 0

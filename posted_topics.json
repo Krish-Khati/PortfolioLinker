@@ -257,6 +257,29 @@
       "date": "2026-10-17",
       "status": "draft",
       "gate_rounds": 1
+    },
+    {
+      "topic": "How to Structure Error Handling in Python Console Applications",
+      "title": "Handling Errors Gracefully in Python Console Applications",
+      "slug": "error-handling-python-console-applications",
+      "url": "https://krishkhati.blogspot.com/",
+      "blogger_post_id": "4233108676813208334",
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the calculator project I built",
+          "target": "project_calculator",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "what I have committed so far",
+          "target": "github",
+          "placement": "close"
+        }
+      ],
+      "date": "2026-10-17",
+      "status": "blogger-draft"
     }
   ]
 }
