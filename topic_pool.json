@@ -1,0 +1,18 @@
+[
+  {
+    "topic": "The AI Pair Programmer That Doesn't Read My Mind",
+    "angle": "A candid look at how Krish uses AI coding assistants for the Fitness Temple project, highlighting the specific instances where the AI hallucinated logic or misspelled API endpoints. The post argues that AI is a starting point, not a finish line, and that the real work happens in the debugging phase where the human developer must understand why the AI's suggestion failed.",
+    "image_query": "laptop screen code errors",
+    "difficulty": "easy",
+    "kind": "personal",
+    "why_it_fits": "Directly draws from the 'AI tools in workflow' theme and the specific Fitness Temple project."
+  },
+  {
+    "topic": "Shipping Calculator: The Humble Win of a Working Feature",
+    "angle": "An exploration of the psychological shift that happens when you stop trying to build the next Facebook and instead ship a working Calculator app to GitHub. The post focuses on the satisfaction of closing a commit, pushing to the remote, and seeing the green 'success' checkmark, arguing that small, complete projects build the confidence needed for larger architecture challenges.",
+    "image_query": "green checkmark commit terminal",
+    "difficulty": "easy",
+    "kind": "personal",
+    "why_it_fits": "Uses the 'Calculator' project to address the 'honest journey of learning' theme."
+  }
+]

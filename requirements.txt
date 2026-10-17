@@ -1,0 +1,7 @@
+python-dotenv>=1.0
+requests>=2.31
+groq>=0.13
+google-auth>=2.30
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2
+Pillow>=10.0

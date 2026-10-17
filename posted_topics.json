@@ -1,0 +1,224 @@
+{
+  "posts": [
+    {
+      "topic": "How to choose a randomisation algorithm, and why the obvious shuffle approach is biased",
+      "title": "Why the naive shuffle isn’t random enough",
+      "slug": "why-naive-shuffle-not-random-enough",
+      "meta_description": "Learn why a naïve list shuffle can produce biased results, how common shortcuts fail, and which algorithm guarantees uniform randomness for games and apps",
+      "tags": [
+        "randomisation",
+        "shuffle",
+        "algorithm",
+        "python",
+        "gaming"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the memory match game i built",
+          "target": "project_memory_match",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "my projects page",
+          "target": "projects",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 1492256,
+        "filename": "why-naive-shuffle-not-random-enough-1492256.jpg",
+        "width": 1280,
+        "height": 853
+      },
+      "alt_text": "a hand holding a king of hearts playing card against a dark wooden background",
+      "alt_text_source": "vision",
+      "date": "2026-10-16",
+      "status": "draft",
+      "gate_rounds": 2
+    },
+    {
+      "topic": "Shipping Calculator: The Humble Win of a Working Feature",
+      "title": "Shipping a simple calculator app",
+      "slug": "shipping-a-simple-calculator-app",
+      "meta_description": "Discover why shipping a simple calculator app and seeing a green commit checkmark builds more confidence than endless planning for massive software projects",
+      "tags": [
+        "coding",
+        "git",
+        "webdev",
+        "projects"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the dark themed calculator app I built",
+          "target": "project_calculator",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "my complete projects list",
+          "target": "projects",
+          "placement": "close"
+        }
+      ],
+      "image": null,
+      "alt_text": "A terminal window showing a successful git commit with a green checkmark indicating deployment success",
+      "alt_text_source": null,
+      "date": "2026-10-17",
+      "status": "draft",
+      "gate_rounds": 2
+    },
+    {
+      "topic": "The AI Pair Programmer That Doesn't Read My Mind",
+      "title": "Why ai assistants are not mind readers when you code",
+      "slug": "ai-pair-programmer-that-doesnt-read-my-mind",
+      "meta_description": "A candid look at why ai coding assistants hallucinate logic and why the real work of software development happens during the human debugging phase",
+      "tags": [
+        "ai",
+        "coding",
+        "web-development",
+        "debugging"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the fitness temple page",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "my code repositories on github",
+          "target": "github",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 1853305,
+        "filename": "ai-pair-programmer-that-doesnt-read-my-mind-1853305.jpg",
+        "width": 1280,
+        "height": 853
+      },
+      "alt_text": "laptop keyboard and screen displaying lines of computer code with syntax highlighting",
+      "alt_text_source": "vision",
+      "date": "2026-10-17",
+      "status": "draft",
+      "gate_rounds": 2
+    },
+    {
+      "topic": "Why Small Projects Teach More Than Long Tutorials",
+      "title": "Why small projects teach more than long tutorials",
+      "slug": "why-small-projects-teach-more-than-long-tutorials",
+      "meta_description": "Discover why building small, focused applications teaches you more about software development than watching endless video tutorials and following guides",
+      "tags": [
+        "coding",
+        "learning",
+        "development",
+        "programming"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "exploring the fitness temple layout",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "my repository collection",
+          "target": "github",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 2620118,
+        "filename": "why-small-projects-teach-more-than-long-tutorials-2620118.jpg",
+        "width": 1280,
+        "height": 853
+      },
+      "alt_text": "laptop keyboard and screen displaying lines of computer code in a dark editor",
+      "alt_text_source": "vision",
+      "date": "2026-10-17",
+      "status": "draft",
+      "gate_rounds": 2
+    },
+    {
+      "topic": "Why a Meta Description Is a Promise, Not a Keyword Field",
+      "kind": "general",
+      "title": "Why a Meta Description Is a Promise Not a Keyword Field",
+      "slug": "meta-description-is-a-promise-not-a-keyword-field",
+      "meta_description": "Stop stuffing keywords into your meta descriptions and start writing human pitches that improve click-through rates and build trust with your readers",
+      "tags": [
+        "seo",
+        "content-strategy",
+        "web-development",
+        "writing"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the dark themed calculator app",
+          "target": "project_calculator",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "where I write up what I learn",
+          "target": "blog",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 70506,
+        "filename": "meta-description-is-a-promise-not-a-keyword-field-70506.jpg",
+        "width": 1280,
+        "height": 853
+      },
+      "alt_text": "a keyboard on a desk",
+      "alt_text_source": "deterministic",
+      "date": "2026-10-17",
+      "status": "draft",
+      "gate_rounds": 1
+    },
+    {
+      "topic": "How to Structure a Hero Section That Converts Visitors Instantly",
+      "kind": "general",
+      "title": "Designing a hero section that grabs attention fast",
+      "slug": "designing-hero-section-that-grabs-attention",
+      "meta_description": "Learn how to structure a high-converting hero section with clear value propositions, distinct typography hierarchy, and a single strong call-to-action",
+      "tags": [
+        "web-development",
+        "ui-design",
+        "frontend",
+        "landing-page"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the gym landing page I built",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "the four apps I have finished",
+          "target": "projects",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 788002,
+        "filename": "designing-hero-section-that-grabs-attention-788002.jpg",
+        "width": 1280,
+        "height": 850
+      },
+      "alt_text": "hands holding a pink highlighter over sketches and notes spread on a wooden desk",
+      "alt_text_source": "vision",
+      "date": "2026-10-17",
+      "status": "draft",
+      "gate_rounds": 2
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+# Secrets — never commit
+.env
+token.json
+*.pem
+client_secret*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Generated drafts / local output
+drafts/
+images/
+*.tmp
+.DS_Store
+
+# Keep the ledger + prompts in the repo
+!posted_topics.json
+!topic_pool.json
