@@ -1,0 +1,95 @@
+name: draft-post
+
+# Runs the PortfolioLinker pipeline on a schedule and on demand.
+#
+# This workflow NEVER publishes. main.py only ever writes to drafts/, and
+# PUBLISH_LIVE is pinned to "false" in the job env below regardless of what
+# any secret says. Publishing stays a deliberate local action
+# (python publish_blogger.py --draft ... --publish).
+
+on:
+  schedule:
+    # Tue and Fri, 09:00 UTC. GitHub cron is UTC-only and runs on best effort,
+    # so expect some drift.
+    - cron: "17 9 * * 2"
+    - cron: "17 9 * * 5"
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "Optional topic to write about (blank = pick from the pool)"
+        required: false
+        type: string
+
+# Two posts a week, never more. A manual run can overlap a scheduled one, so
+# let the newest finish rather than cancelling it mid-API-call.
+concurrency:
+  group: draft-post
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build .env from secrets
+        # config.py boots off a .env file, so materialise one from secrets.
+        # Every value is masked in logs; the file is never committed.
+        run: |
+          cat > .env <<EOF
+          LLM_PROVIDERS=${{ secrets.LLM_PROVIDERS }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+          PIXABAY_API_KEY=${{ secrets.PIXABAY_API_KEY }}
+          BLOGGER_CLIENT_ID=${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET=${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_REFRESH_TOKEN=${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_BLOG_ID=${{ secrets.BLOGGER_BLOG_ID }}
+          PORTFOLIO_URL=${{ secrets.PORTFOLIO_URL }}
+          PORTFOLIO_BLOG_PAGE_URL=${{ secrets.PORTFOLIO_BLOG_PAGE_URL }}
+          GITHUB_PROFILE_URL=${{ secrets.GITHUB_PROFILE_URL }}
+          PUBLISH_LIVE=false
+          EOF
+          echo "::add-mask::$(grep -E 'KEY|SECRET|TOKEN' .env | tr '\n' ' ')"
+
+      - name: Generate a draft
+        # Exit code 1 = a draft was produced but did not clear the gate. That
+        # is not a workflow failure, so it must not mark the run red.
+        run: |
+          if [ -n "${{ inputs.topic }}" ]; then
+            python main.py --topic "${{ inputs.topic }}" || true
+          else
+            python main.py || true
+          fi
+
+      - name: Verify a draft was produced
+        run: |
+          if [ ! -f drafts/LATEST.txt ]; then
+            echo "::error::pipeline produced no draft at all"
+            exit 1
+          fi
+          echo "latest draft: $(cat drafts/LATEST.txt)"
+
+      - name: Upload drafts and images as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drafts
+          path: |
+            drafts/
+            images/
+          retention-days: 14
+          if-no-files-found: warn

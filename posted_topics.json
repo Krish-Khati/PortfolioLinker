@@ -219,6 +219,44 @@
       "date": "2026-10-17",
       "status": "draft",
       "gate_rounds": 2
+    },
+    {
+      "topic": "How to Structure Error Handling in Python Console Applications",
+      "kind": "general",
+      "title": "Handling Errors Gracefully in Python Console Applications",
+      "slug": "error-handling-python-console-applications",
+      "meta_description": "Learn how to catch exceptions cleanly in Python console apps to avoid silent crashes and give users actionable feedback when something goes wrong",
+      "tags": [
+        "python",
+        "programming",
+        "coding",
+        "software"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the calculator project I built",
+          "target": "project_calculator",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "what I have committed so far",
+          "target": "github",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 1853305,
+        "filename": "error-handling-python-console-applications-1853305.jpg",
+        "width": 1280,
+        "height": 853
+      },
+      "alt_text": "source code displayed on a computer screen close up",
+      "alt_text_source": "tags",
+      "date": "2026-10-17",
+      "status": "draft",
+      "gate_rounds": 1
     }
   ]
 }

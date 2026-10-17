@@ -7,7 +7,8 @@ default in .env is false. It:
   1. reads a saved draft from drafts/
   2. re-runs the quality gate (a draft that passed once may not pass now)
   3. refuses to publish if any fabrication tripwire fires
-  4. uploads the image to Blogger and swaps in the hosted URL
+  4. resolves the image to a usable URL (see _pixabay_public_url for why this
+     is a hotlink and not a Blogger upload)
   5. creates the post as a Blogger DRAFT, or publishes only when explicitly told
 
     python publish_blogger.py --draft drafts/<file>.json              # to drafts
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -50,51 +52,65 @@ def blogger_service():
 
 
 # ------------------------------------------------------------------- image
-def upload_image(blog_id: str, path: Path) -> str:
-    """Upload to Blogger and return the hosted URL.
+def _pixabay_public_url(path: Path) -> str:
+    """Return the image's own public CDN URL, verified reachable.
 
-    Blogger's v3 posts.insert does not accept inline media, so this uses the
-    legacy upload endpoint that the Blogger web UI itself calls.
+    Why this exists instead of an upload: Blogger's v3 API has no media upload
+    method, and the endpoint the web UI used to use for it is gone. The old
+    code scraped a form token out of
+    https://www.blogger.com/blogs.g?blogId=... and POSTed to
+    blogger.google.com/api/upload/<token>. That page now returns a hard 404,
+    so the upload path could never run. The replacement upload service
+    (content-push.googleapis.com/upload/blogger[/resumable]) answers every
+    request with "Request without ClientId (Feed name)", because the feed name
+    it wants is an ephemeral per-session value only the SPA bootstrap knows.
+
+    So we point the post at the image's canonical public URL instead. The file
+    was downloaded from that same URL, so the bytes in the post are the exact
+    bytes we validated. This is hotlinking, not a copy into Blogger's media
+    store: if that host ever stops serving it, the post keeps its alt text but
+    loses the picture.
     """
-    import re
+    import urllib.request
 
-    from google.auth.transport.requests import AuthorizedSession
-    from google.oauth2.credentials import Credentials
-
-    if not path.exists():
-        raise SystemExit(f"[!] image not found: {path}")
-
-    creds = Credentials(
-        token=None,
-        refresh_token=config.env("BLOGGER_REFRESH_TOKEN"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=config.env("BLOGGER_CLIENT_ID"),
-        client_secret=config.env("BLOGGER_CLIENT_SECRET"),
-        scopes=[BLOGGER_SCOPE],
-    )
-    sess = AuthorizedSession(creds)
-
-    page = sess.get(f"https://www.blogger.com/blogs.g?blogId={blog_id}").text
-    m = re.search(r'name="(blogger\.google\.com/api/upload/[^"]+)"', page)
-    if not m:
+    meta_path = path.with_suffix(".json")
+    url = ""
+    if meta_path.exists():
+        try:
+            url = json.loads(meta_path.read_text(encoding="utf-8")).get(
+                "source_url", "") or ""
+        except (json.JSONDecodeError, OSError):
+            url = ""
+    if not url:
         raise SystemExit(
-            "[!] Could not find Blogger's upload form in the page HTML.\n"
-            "    The web UI may have changed, or the blog is not reachable with\n"
-            "    this token. Nothing was published.")
-    token = m.group(1)
+            f"[!] no public image URL available for {path.name}.\n"
+            "    Blogger has no upload API and this image has no recorded\n"
+            "    source_url. Re-fetch it with fetch_image.py. "
+            "Nothing was published.")
 
-    suffix = path.suffix.lstrip(".") or "jpeg"
-    data = path.read_bytes()
-    resp = sess.post(f"https://{token}", data=data,
-                     headers={"Content-Type": f"image/{suffix}"})
-    if resp.status_code != 200:
-        raise SystemExit(f"[!] upload failed ({resp.status_code}): {resp.text[:200]}")
+    # Pixabay's CDN rejects a bare HEAD (403) but serves fine to a normal
+    # client, so check with a browser-ish User-Agent before we commit to it.
+    req = urllib.request.Request(url, method="HEAD", headers={
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/124.0 Safari/537.36"),
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(
+            f"[!] image URL for {path.name} is not reachable "
+            f"({exc.__class__.__name__}). Nothing was published.")
 
-    rm = re.search(r'"url"\s*:\s*"(.*?)"', resp.text)
-    if not rm:
-        raise SystemExit(f"[!] no url in upload response: {resp.text[:200]}")
-    url = rm.group(1).replace("\\/", "/")
-    print(f"[ok] uploaded {path.name} -> {url}")
+    if not ctype.startswith("image/"):
+        raise SystemExit(
+            f"[!] image URL for {path.name} returned {ctype!r}, not an "
+            "image. Nothing was published.")
+
+    print(f"[ok] {path.name} -> {url}")
+    print("     [note] hotlinked from its public CDN URL; Blogger's own "
+          "upload endpoint no longer exists")
     return url
 
 
@@ -113,16 +129,21 @@ def build_request_body(post: dict[str, Any], image_url: str,
     else:
         state = "LIVE" if config.publish_live() else "DRAFT"
 
-    return {
-        "blog": {"id": config.env("BLOGGER_BLOG_ID")},
+    body: dict = {
         "title": post["title"],
         "content": body_html,
-        # Only set these on a real publish; a Blogger draft is a full post
-        # payload anyway, so labels are always sent.
+        # A Blogger draft is a full post payload anyway, so labels always ship.
         "labels": post.get("tags", [])[:5],
-        "published": state == "LIVE",
         "status": state,
     }
+    # `published` is a datetime string in v3, not a bool - sending False is a
+    # 400 ("Invalid value at 'post.published' (TYPE_STRING), false"). Omitting
+    # the field entirely is what leaves a post as a draft; only a real publish
+    # sets it. The blog itself is identified by the blogId method parameter,
+    # not by a body field.
+    if state == "LIVE":
+        body["published"] = datetime.now(timezone.utc).isoformat()
+    return body
 
 
 def main() -> int:
@@ -197,13 +218,17 @@ def main() -> int:
     image_url = ""
     if image:
         img_path = config.IMAGES_DIR / image["filename"]
-        image_url = upload_image(blog_id, img_path)
+        if not img_path.exists():
+            raise SystemExit(f"[!] image not found: {img_path}")
+        image_url = _pixabay_public_url(img_path)
 
     body = build_request_body(post, image_url, image, publish_now)
     print(f"\n[info] {'PUBLISHING' if publish_now else 'creating DRAFT'}: "
           f"{post['title']}")
 
-    result = service.posts().insert(body=body).execute()
+    # blogId is a method parameter, not a body field. posts.insert raises
+    # TypeError("Missing required parameter") without it.
+    result = service.posts().insert(blogId=blog_id, body=body).execute()
     url = result.get("url", "")
     state = result.get("status", "?")
 
