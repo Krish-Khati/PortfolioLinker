@@ -48,6 +48,11 @@ jobs:
       - name: Build .env from secrets
         # config.py boots off a .env file, so materialise one from secrets.
         # Every value is masked in logs; the file is never committed.
+        #
+        # Note the name mismatch: GitHub refuses secret names starting with
+        # GITH (reserved), so the secret is PROFILE_GITHUB_URL while the line
+        # written into .env is GITHUB_PROFILE_URL, which is what config.py
+        # reads.
         run: |
           cat > .env <<EOF
           LLM_PROVIDERS=${{ secrets.LLM_PROVIDERS }}
@@ -60,7 +65,7 @@ jobs:
           BLOGGER_BLOG_ID=${{ secrets.BLOGGER_BLOG_ID }}
           PORTFOLIO_URL=${{ secrets.PORTFOLIO_URL }}
           PORTFOLIO_BLOG_PAGE_URL=${{ secrets.PORTFOLIO_BLOG_PAGE_URL }}
-          GITHUB_PROFILE_URL=${{ secrets.GITHUB_PROFILE_URL }}
+          GITHUB_PROFILE_URL=${{ secrets.PROFILE_GITHUB_URL }}
           PUBLISH_LIVE=false
           EOF
           echo "::add-mask::$(grep -E 'KEY|SECRET|TOKEN' .env | tr '\n' ' ')"
