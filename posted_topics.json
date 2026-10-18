@@ -280,6 +280,67 @@
       ],
       "date": "2026-10-17",
       "status": "blogger-draft"
+    },
+    {
+      "topic": "How to Structure a High-Energy Gym Landing Page Hero Section",
+      "kind": "personal",
+      "title": "Building a high-energy gym hero section",
+      "slug": "building-a-high-energy-gym-hero-section",
+      "meta_description": "Learn how to build a high-energy gym landing page hero section with bold value propositions, immediate action triggers, and dark red visual contrast",
+      "tags": [
+        "web-development",
+        "css-design",
+        "frontend",
+        "ui-design"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the black and red site I made",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "what I have actually shipped",
+          "target": "projects",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 1850925,
+        "filename": "building-a-high-energy-gym-hero-section-1850925.jpg",
+        "width": 1280,
+        "height": 850
+      },
+      "alt_text": "woman sitting on a leg press machine in a dark gym",
+      "alt_text_source": "vision",
+      "date": "2026-10-18",
+      "status": "draft",
+      "gate_rounds": 1
+    },
+    {
+      "topic": "How to Structure a High-Energy Gym Landing Page Hero Section",
+      "title": "Building a high-energy gym hero section",
+      "slug": "building-a-high-energy-gym-hero-section",
+      "url": "https://krishkhati.blogspot.com/",
+      "blogger_post_id": "1936021095066325927",
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the black and red site I made",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "what I have actually shipped",
+          "target": "projects",
+          "placement": "close"
+        }
+      ],
+      "date": "2026-10-18",
+      "status": "blogger-draft"
     }
   ]
 }

@@ -214,7 +214,22 @@ def pick_topics(n: int = 3, max_rounds: int = 3) -> list[dict[str, Any]]:
                 print("[warn] model returned unparseable JSON; skipping round")
                 continue
 
-        for t in parsed.get("topics", []):
+        # The model sometimes returns a bare array instead of {"topics": [...]},
+        # which used to blow up on parsed.get() and kill the whole run.
+        if isinstance(parsed, list):
+            parsed = {"topics": parsed}
+        if not isinstance(parsed, dict):
+            print(f"[warn] model returned {type(parsed).__name__}, not an "
+                  "object; skipping round")
+            continue
+
+        topics = parsed.get("topics", [])
+        if not isinstance(topics, list):
+            print(f"[warn] 'topics' is {type(topics).__name__}, not a list; "
+                  "skipping round")
+            continue
+
+        for t in topics:
             if len(accepted) >= n:
                 break
             # The model sometimes returns topics as bare strings or nested
