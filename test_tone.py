@@ -132,6 +132,66 @@ check_true("hedge caught on the real sentence",
 check_true("filler anchor caught on the real anchor",
            any("banned phrase" in e or "generic SEO filler" in e for e in es))
 
+print("\n6. AI tells and tidy transitions are rejected")
+for phrase, want in (("This improves the user experience overall.", True),
+                     ("The solution is seamless and robust.", True),
+                     ("It's worth noting that this matters.", True),
+                     ("In this article we will explore error handling.", True),
+                     ("Let's explore how this works in practice.", True),
+                     ("Now that we've covered the basics, let's move on.", True),
+                     ("It navigates the complexities of validation.", True)):
+    p = copy.deepcopy(BASE)
+    p["lede"] = phrase + " " + lede_words(30)
+    p["sections"][0]["paragraphs"][0] = phrase
+    got = any("AI filler" in e or "AI transition" in e for e in errs(p))
+    check(f"{phrase[:34]!r} flagged={want}", got, want)
+
+print("\n7. a lede cut mid-sentence is rejected")
+p = copy.deepcopy(BASE)
+p["lede"] = "Console apps break unless you plan for failure from the very first"
+check_true("dangling lede caught",
+           any("mid-sentence" in e for e in errs(p)))
+p["lede"] = "Console apps break unless you plan for failure from line one."
+check("complete lede passes that check",
+      any("mid-sentence" in e for e in errs(p)), False)
+
+print("\n8. the length repair must not leave a fragment")
+_flat = dict(BASE)
+_flat["lede"] = ("Console applications break the moment an unexpected input "
+                 "hits them unless you plan for failure from the very first "
+                 "line of code when building software for the terminal.")
+_repaired = copy.deepcopy(_flat)
+G._repair(_repaired)
+check_true("over-long lede left whole rather than truncated mid-clause",
+           _repaired["lede"].rstrip().endswith((".", "!", "?")))
+print(f"      lede now: {_repaired['lede'][:70]}...")
+
+print("\n9. monotonous rhythm is rejected")
+# Every sentence long and same-shaped: the loudest "this was generated" tell.
+_mono = " ".join(
+    f"The system provides a comprehensive and robust mechanism for handling "
+    f"the various conditions which may arise during operation of the tool."
+    for _ in range(14))
+p = copy.deepcopy(BASE)
+p["lede"] = lede_words(30)
+p["sections"][0]["paragraphs"][0] = _mono
+check_true("uniform long rhythm caught",
+           any("rhythm" in e for e in errs(p)))
+# Varied prose from the real reviewed draft must NOT trip it.
+_varied = ("Completion is a skill on its own. Almost nothing else trains it. "
+           "Most tutorials end when the video ends, so the exercise never "
+           "reaches the state where it has to work without you watching. "
+           "Shipping is the only reliable way I know to find the gap between "
+           "having seen something work and understanding why it worked. "
+           "That gap is the whole point. It is uncomfortable and it is also "
+           "where most of the actual learning happens, which is why it is "
+           "worth sitting with rather than skipping to the next tutorial.")
+p = copy.deepcopy(BASE)
+p["lede"] = lede_words(30)
+p["sections"][0]["paragraphs"][0] = _varied
+check("varied human rhythm allowed",
+      any("rhythm" in e for e in errs(p)), False)
+
 print("\n" + "=" * 52)
 print(f"  {PASSES} passed, {FAILS} failed")
 print("=" * 52)

@@ -302,6 +302,13 @@ def _build_prompt(topic: dict[str, Any], prior_anchors: list[str],
     )
     body_hints = ", ".join(P.BODY_TARGET_HINTS)
     close_hints = ", ".join(P.CLOSE_TARGET_HINTS)
+    # The topic decides kind; fall back to personal so the link rules stay
+    # strict when the topic is missing the field.
+    kind = str(topic.get("kind") or "personal").strip().lower()
+    if kind not in ("personal", "general"):
+        kind = "personal"
+    site_hints = ", ".join(sorted(P.SITE_TARGETS))
+    portfolio_domain = P.PORTFOLIO_DOMAIN
 
     return f"""{P.ground_truth()}
 
@@ -334,6 +341,12 @@ STRUCTURE:
   This is a hard limit and it is the single most common failure. A 40-word
   lede is ideal. Do NOT write a paragraph here and do NOT summarise the whole
   article. If you are unsure, write 40 words.
+  It must be a HOOK, not a thesis statement. A hook grabs; a thesis announces
+  what the article is about. Bad: "Error handling is essential for building
+  reliable applications, and this post explores why." Good: "The worst part
+  of a crash is the bit after it, where the user is staring at a wall of
+  traceback wondering what they typed wrong." One of those makes a reader
+  continue. The other is an abstract.
 - "sections": {MIN_SECTIONS}-{MAX_SECTIONS} sections. Each has a short "heading"
   (2-5 words, sentence case) and "paragraphs" (1-3 short paragraphs).
   Do not number the headings. Do not use the word "Conclusion".
@@ -344,6 +357,16 @@ BACKLINKS - exactly two, no more, no fewer:
 - Link 2 is the soft close, in the final paragraph. Something like pointing
   at where to see more of the work. Never "click here", never "check out my
   blog!".
+
+THIS POST IS "{kind}". That decides where the links go:
+- If the post is about one of the specific projects above, LINK1 may point at
+  that project's page, and the sentence must actually be about that project.
+- If the post is a GENERAL explainer with no real tie to any one project, do
+  NOT point LINK1 at a specific project page just to fill it. LINK2 - the close
+  - must point at the site itself ({site_hints}).
+- At least one of the two links MUST resolve to a page on
+  {portfolio_domain}. This is checked mechanically and the post is rejected
+  otherwise. Linking only to GitHub is not acceptable.
 
 HOW TO PLACE A LINK:
 Put the literal token [[LINK1]] or [[LINK2]] inside the paragraph text, exactly
@@ -368,6 +391,30 @@ Used in recent posts, do not reuse these wordings:
 Instead write anchor text that a human would type: "the calculator project I
 built", "how I set up LangChain", "my GitHub profile", "the Fitness Temple page".
 Two to six words. Lowercase, no capitalised slogan words.
+
+THE LINK MUST FIT THE SENTENCE. A link whose anchor does not match the topic of
+the sentence it sits in is worse than no link. If you mention a project,
+the anchor names that project and the sentence is genuinely about it.
+
+HUMAN VOICE - this is what stops it reading like an AI explainer:
+- Vary sentence length hard. After a long one, drop a short blunt sentence.
+  Five sentences in a row of the same 20-30 word shape is the single loudest
+  tell that a machine wrote it.
+- Cut the tidy joiners. No "In this article", no "Let's explore", no
+  "Now that we've covered", no "This brings us to". Start the paragraph with
+  the thing itself.
+- Say what you actually think, mildly. "Honestly,", "the boring answer is",
+  "I'd push back on that a bit". A preference or a small complaint about a
+  practice is fine. Perfectly balanced summary prose is not.
+- It is allowed to be slightly imperfect: a concrete small example, a specific
+  preference, a half-sentence aside. Do not sand it down.
+- BANNED as obvious AI tells: "user experience", "seamless", "robust",
+  "leverage", "delve", "it's important to note", "in today's world",
+  "at the end of the day", "a communicative bridge", "plays a crucial role",
+  "navigate the complexities".
+- Do not open a section with an imperative like "Target the exact failure
+  points." or "Keep your core logic separate." Start with the observation
+  that makes the advice obvious instead.
 
 IMAGE:
 - "image_query": a specific 2-5 word Pixabay search phrase matching THIS post's
@@ -466,10 +513,162 @@ def _repair(post: dict[str, Any]) -> dict[str, Any]:
         words = lede.split()
         while words and _wc(" ".join(words)) > MAX_LEDE_WORDS:
             words.pop()
-        post["lede"] = " ".join(words).rstrip(",;:")
-        print(f"[repair] trimmed lede to {len(words)} words")
+        trimmed = " ".join(words).rstrip(",;:")
+        # Popping words off the end used to leave a dangling fragment, e.g. a
+        # lede ending "...accepting that users will supply invalid". Only
+        # accept the trim if it still ends on a whole sentence.
+        if _ends_mid_sentence(trimmed):
+            print("[repair] lede trim would cut mid-sentence; keeping as is "
+                  "(validate() will flag the length)")
+        else:
+            post["lede"] = trimmed
+            print(f"[repair] trimmed lede to {len(words)} words")
 
+    post = _repair_general_links(post)
     return post
+
+
+def _ends_mid_sentence(text: str) -> bool:
+    """True if `text` stops between words rather than at sentence end."""
+    t = (text or "").rstrip()
+    return not t or t[-1] not in ".!?"
+
+
+def _repair_general_links(post: dict[str, Any]) -> dict[str, Any]:
+    """Point a general post's close link at the portfolio, not at GitHub.
+
+    Observed failure: a "general" post about Python error handling shipped
+    LINK1 -> project_calculator and LINK2 -> github, so the only portfolio
+    link was an incidental one and the close sent readers to GitHub. A
+    general topic has no honest tie to one project, so the close belongs on a
+    site page.
+
+    The anchor is rewritten too, because an anchor that says "what I have
+    committed so far" pointed at a homepage is worse than no link. We take the
+    first example anchor for the new target that is not already used in this
+    post or in the recent ledger.
+    """
+    if post.get("kind") != "general":
+        return post
+
+    links = post.get("backlinks") or []
+    close = next((l for l in links if l.get("placement") == "close"), None)
+    if close is None or close.get("target") in P.SITE_TARGETS:
+        return post
+
+    body_target = next((l.get("target") for l in links
+                        if l.get("placement") == "body"), None)
+
+    used = {textnorm.anchor_key(l.get("anchor", "") or "")
+            for l in links}
+    recent = {textnorm.anchor_key(a) for a in ledger.recent_anchors(12)}
+
+    for target in ("projects", "home", "blog", "faq"):
+        if target == body_target:
+            continue
+        for example in P.ANCHOR_EXAMPLES.get(target, []):
+            key = textnorm.anchor_key(example)
+            if key in used or key in recent:
+                continue
+            print(f"[repair] general post: close link {close['target']} -> "
+                  f"{target}, anchor {close.get('anchor')!r} -> {example!r}")
+            close["target"] = target
+            close["anchor"] = example
+            return post
+
+    print(f"[warn] general post: close link {close.get('target')} is not a "
+          "site page and no spare anchor was available")
+    return post
+
+
+# Phrases that mark machine-written filler. Asked for in the prompt and then
+# checked here, because a prompt instruction alone does not survive contact
+# with a model that has been optimised to be agreeable.
+AI_TELL_PHRASES = [
+    "user experience",
+    "seamless",
+    "leverage",
+    "leverages",
+    "leveraging",
+    "delve",
+    "delves",
+    "delving",
+    "it's important to note",
+    "it is important to note",
+    "in today's world",
+    "at the end of the day",
+    "communicative bridge",
+    "plays a crucial role",
+    "play a crucial role",
+    "navigate the complexities",
+    "navigates the complexities",
+    "navigating the complexities",
+    "robust solution",
+    "it's worth noting",
+    "it is worth noting",
+    "in conclusion",
+    "furthermore",
+    "moreover",
+]
+
+# Tidy joiners that signal a generated transition instead of a thought.
+TIDY_TRANSITIONS = [
+    "in this article",
+    "let's explore",
+    "lets explore",
+    "let's dive",
+    "now that we've covered",
+    "now that we have covered",
+    "this brings us to",
+    "moving on to",
+    "let's take a look",
+    "let's take a closer look",
+    "with that said",
+]
+
+
+def _prose_chunks(post: dict[str, Any]) -> list[str]:
+    chunks = [post.get("lede", "") or ""]
+    for s in post.get("sections", []) or []:
+        chunks.append(s.get("heading", "") or "")
+        chunks.extend(s.get("paragraphs", []) or [])
+    return [c for c in chunks if c]
+
+
+def voice_errors(post: dict[str, Any]) -> list[str]:
+    """Flag the tells that make a post read as machine-written."""
+    errs: list[str] = []
+    low = " ".join(_prose_chunks(post)).lower()
+
+    for phrase in AI_TELL_PHRASES:
+        if phrase in low:
+            errs.append(f"reads like AI filler: {phrase!r}")
+
+    for phrase in TIDY_TRANSITIONS:
+        if phrase in low:
+            errs.append(f"tidy AI transition: {phrase!r}")
+
+    # A lede that ends mid-sentence is a bug, not a style choice: the length
+    # repair used to trim words off the end without checking the result.
+    lede = (post.get("lede") or "").strip()
+    if lede and _ends_mid_sentence(lede):
+        errs.append("lede ends mid-sentence (not a full stop)")
+
+    # Uniform rhythm. Measured on a real post: 25 of 36 sentences were 18+
+    # words and only 4 of 35 came in under 12 - monotonous, and it reads as
+    # generated even though every sentence is individually well formed.
+    # Genuinely varied prose sits around 0.19, so 0.15 separates the two
+    # without flagging good writing.
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", low)
+                 if len(s.split()) >= 6]
+    if len(sentences) >= 12:
+        short = sum(1 for s in sentences if len(s.split()) < 12)
+        if short / len(sentences) < 0.15:
+            errs.append(
+                f"only {short}/{len(sentences)} sentences are under 12 words "
+                "- monotonous rhythm, mix in some short blunt ones")
+
+    return errs
 
 
 def validate(post: dict[str, Any]) -> list[str]:
@@ -510,6 +709,18 @@ def validate(post: dict[str, Any]) -> list[str]:
                 errs.append(f"bad placement {l.get('placement')!r}")
         if len({l.get("target") for l in links}) != 2:
             errs.append("both links point at the same page")
+
+        # Hard rule: every post must send at least one reader to the portfolio
+        # site itself. Two links to github.com is a failure - this system
+        # exists to route readers to krish-portfolio-dev.vercel.app, and a post
+        # that never does is not doing its job.
+        if not any(P.is_portfolio(l.get("target", "")) for l in links):
+            errs.append(
+                "no link points at the portfolio site "
+                f"({P.PORTFOLIO_DOMAIN}); at least one of LINK1/LINK2 must "
+                "resolve to a page there")
+
+    errs += voice_errors(post)
 
     # ---- anchor text ----
     seen: set[str] = set()

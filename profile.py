@@ -10,6 +10,8 @@ If you build something new or correct a description, edit it here only.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 # ---------------------------------------------------------------- identity
 IDENTITY = """Krish Khati. Motivated Class 12 student from Pundri, Kaithal,
 Haryana, India. No formal tech background, no coding classes - everything was
@@ -97,6 +99,23 @@ LINK_TARGETS: dict[str, str] = {
     "project_calculator": "https://krish-portfolio-dev.vercel.app/projects/calculator",
     "github": "https://github.com/krish-khati",
 }
+
+# Site-wide pages, as opposed to individual project pages. A "general" post
+# has no obvious tie to one specific project, so its close link belongs on one
+# of these rather than on a random project page or on GitHub.
+SITE_TARGETS: set[str] = {"home", "projects", "blog", "faq"}
+
+# The portfolio's own domain, derived from the verified table rather than
+# hardcoded, so it can never drift from LINK_TARGETS. Every post must link
+# here at least once - linking only to GitHub defeats the point of the system.
+PORTFOLIO_DOMAIN: str = urlparse(LINK_TARGETS["home"]).netloc
+
+
+def is_portfolio(target: str) -> bool:
+    """True if this link target resolves to a page on the portfolio site."""
+    url = LINK_TARGETS.get(target, "")
+    return bool(url) and urlparse(url).netloc == PORTFOLIO_DOMAIN
+
 
 # Concrete anchor examples per target. The validator bans every generic
 # phrase, and with only nine pages the model kept guessing the same handful.

@@ -441,6 +441,59 @@ finally:
     shutil.rmtree(config.DRAFTS_DIR, ignore_errors=True)
     config.DRAFTS_DIR = _real_drafts
 
+print("\n10. every post must link to the portfolio site")
+import profile as P  # noqa: E402
+
+_portfolio = P.is_portfolio
+
+check("home is portfolio", _portfolio("home"), True)
+check("projects page is portfolio", _portfolio("projects"), True)
+check("a project subpage is portfolio", _portfolio("project_calculator"), True)
+check("github is NOT portfolio", _portfolio("github"), False)
+check("domain parsed from the table", P.PORTFOLIO_DOMAIN,
+      "krish-portfolio-dev.vercel.app")
+
+_no_site = json.loads(json.dumps(post))
+for l in _no_site["backlinks"]:
+    l["target"] = "github"
+_no_site["backlinks"][0]["target"] = "github"
+check_true("a post with no portfolio link is rejected",
+           any("no link points at the portfolio" in e
+               for e in G.validate(_no_site)))
+
+# github is currently the only target off the portfolio domain, so "both links
+# github" is the only way to trip this. That is exactly why the check matters:
+# it does not depend on the distinct-target rule also catching it, and it
+# still holds if a demo/deploy URL is ever added to LINK_TARGETS.
+check("github is the only off-site target today",
+      sorted(k for k in P.LINK_TARGETS if not _portfolio(k)), ["github"])
+
+print("\n11. general posts get their close link moved onto the site")
+_gen = json.loads(json.dumps(post))
+_gen["kind"] = "general"
+for l in _gen["backlinks"]:
+    l["target"] = "github"
+_gen["backlinks"][0]["target"] = "project_calculator"   # body: keep
+_gen["backlinks"][1]["target"] = "github"               # close: should move
+before_anchor = _gen["backlinks"][1]["anchor"]
+G._repair(_gen)
+check("close link moved off github",
+      _gen["backlinks"][1]["target"] in P.SITE_TARGETS, True)
+check("close anchor was rewritten to match",
+      _gen["backlinks"][1]["anchor"] != before_anchor, True)
+check_true("no github link left",
+           all(l["target"] != "github" for l in _gen["backlinks"]))
+check_true("portfolio link now present",
+           any(_portfolio(l["target"]) for l in _gen["backlinks"]))
+
+_pers = json.loads(json.dumps(post))
+_pers["kind"] = "personal"
+_pers["backlinks"][1]["target"] = "github"
+_pers["backlinks"][1]["anchor"] = "the repos I have pushed"
+G._repair(_pers)
+check("personal posts are left alone",
+      _pers["backlinks"][1]["target"], "github")
+
 print("\n" + "=" * 52)
 print(f"  {PASSES} passed, {FAILS} failed")
 print("=" * 52)
