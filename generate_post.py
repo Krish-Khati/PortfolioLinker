@@ -510,19 +510,13 @@ def _repair(post: dict[str, Any]) -> dict[str, Any]:
 
     lede = post.get("lede") or ""
     if lede and _wc(lede) > MAX_LEDE_WORDS:
-        words = lede.split()
-        while words and _wc(" ".join(words)) > MAX_LEDE_WORDS:
-            words.pop()
-        trimmed = " ".join(words).rstrip(",;:")
-        # Popping words off the end used to leave a dangling fragment, e.g. a
-        # lede ending "...accepting that users will supply invalid". Only
-        # accept the trim if it still ends on a whole sentence.
-        if _ends_mid_sentence(trimmed):
-            print("[repair] lede trim would cut mid-sentence; keeping as is "
-                  "(validate() will flag the length)")
-        else:
+        trimmed = _fit_lede(lede)
+        if trimmed:
             post["lede"] = trimmed
-            print(f"[repair] trimmed lede to {len(words)} words")
+            print(f"[repair] trimmed lede {_wc(lede)} -> {_wc(trimmed)} words")
+        else:
+            print("[repair] lede is over-length but has no clean cut point; "
+                  "validate() will flag it")
 
     post = _repair_general_links(post)
     return post
@@ -654,21 +648,61 @@ def voice_errors(post: dict[str, Any]) -> list[str]:
     if lede and _ends_mid_sentence(lede):
         errs.append("lede ends mid-sentence (not a full stop)")
 
-    # Uniform rhythm. Measured on a real post: 25 of 36 sentences were 18+
-    # words and only 4 of 35 came in under 12 - monotonous, and it reads as
-    # generated even though every sentence is individually well formed.
-    # Genuinely varied prose sits around 0.19, so 0.15 separates the two
-    # without flagging good writing.
+    # Uniform rhythm. Only egregious cases are a hard error. The model
+    # consistently writes uniform prose (measured over several runs: 0/29,
+    # 2/42, 3/36, 4/40 sentences under 12 words), so a ratio threshold tight
+    # enough to catch this reliably also rejected essentially every draft and
+    # stopped the pipeline dead. Zero short sentences across a long post is
+    # an objective signal; anything subtler is the quality gate's AI_SLOP job,
+    # and the prompt asks for it.
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", low)
                  if len(s.split()) >= 6]
-    if len(sentences) >= 12:
+    if len(sentences) >= 20:
         short = sum(1 for s in sentences if len(s.split()) < 12)
-        if short / len(sentences) < 0.15:
+        if short == 0:
             errs.append(
-                f"only {short}/{len(sentences)} sentences are under 12 words "
-                "- monotonous rhythm, mix in some short blunt ones")
+                f"none of {len(sentences)} sentences are under 12 words - "
+                "uniform rhythm, mix in some short blunt ones")
 
     return errs
+
+
+def _fit_lede(lede: str) -> str:
+    """Shorten an over-long lede without leaving a fragment.
+
+    The original repair popped words off the end until it fit, which produced
+    things like "...accepting that users will supply invalid". Simply refusing
+    to trim was safer but fatal: the model routinely writes a 150-word lede,
+    so every draft got rejected on length.
+
+    So cut at a real boundary instead. Whole sentences first; if a single
+    sentence is itself over the limit, fall back to the last clause boundary
+    before it. Returns "" when no clean cut exists.
+    """
+    limit = MAX_LEDE_WORDS
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", lede.strip())
+                 if s.strip()]
+    kept: list[str] = []
+    for s in sentences:
+        if _wc(" ".join(kept + [s])) <= limit:
+            kept.append(s)
+        else:
+            break
+    if kept and _wc(" ".join(kept)) >= MIN_LEDE_WORDS:
+        return " ".join(kept)
+
+    # One sentence is too long on its own. Cut at the last clause boundary
+    # that still leaves a plausible lede.
+    first = sentences[0] if sentences else ""
+    words = first.split()
+    best = ""
+    for i, w in enumerate(words):
+        cand = " ".join(words[:i + 1])
+        if w.endswith((",", ";", ":", " -")) and _wc(cand) <= limit:
+            best = cand.rstrip(",;:- ")
+        elif _wc(cand) > limit:
+            break
+    return best if _wc(best) >= MIN_LEDE_WORDS else ""
 
 
 def validate(post: dict[str, Any]) -> list[str]:

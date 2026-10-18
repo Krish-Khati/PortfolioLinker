@@ -171,12 +171,27 @@ print("\n9. monotonous rhythm is rejected")
 _mono = " ".join(
     f"The system provides a comprehensive and robust mechanism for handling "
     f"the various conditions which may arise during operation of the tool."
-    for _ in range(14))
+    for _ in range(26))
 p = copy.deepcopy(BASE)
 p["lede"] = lede_words(30)
-p["sections"][0]["paragraphs"][0] = _mono
+# Every section must be uniform, otherwise the fixture's own short sentences
+# satisfy the check and nothing is being tested.
+for i, s in enumerate(p["sections"]):
+    s["paragraphs"] = [_mono + f" [[LINK{i + 1}]]"]
 check_true("uniform long rhythm caught",
            any("rhythm" in e for e in errs(p)))
+# Prose that is merely on the long side must NOT trip it - an earlier
+# ratio-based threshold rejected perfectly good writing and stopped the
+# pipeline producing anything at all.
+_ordinary = " ".join(
+    "The handling of the exception paths deserves careful attention in most "
+    "of the scripts that I write. It is a topic that comes up repeatedly."
+    for _ in range(12))
+p = copy.deepcopy(BASE)
+p["lede"] = lede_words(30)
+p["sections"][0]["paragraphs"][0] = _ordinary
+check("long but not perfectly uniform prose allowed",
+      any("rhythm" in e for e in errs(p)), False)
 # Varied prose from the real reviewed draft must NOT trip it.
 _varied = ("Completion is a skill on its own. Almost nothing else trains it. "
            "Most tutorials end when the video ends, so the exercise never "

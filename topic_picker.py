@@ -144,6 +144,8 @@ Return exactly this JSON shape:
 
 def _validate(t: dict[str, Any]) -> str | None:
     """Return an error string, or None if the topic is usable."""
+    if not isinstance(t, dict):
+        return f"topic entry is {type(t).__name__}, not an object"
     for field in ("topic", "angle", "image_query"):
         if not str(t.get(field, "")).strip():
             return f"missing field '{field}'"
@@ -215,6 +217,13 @@ def pick_topics(n: int = 3, max_rounds: int = 3) -> list[dict[str, Any]]:
         for t in parsed.get("topics", []):
             if len(accepted) >= n:
                 break
+            # The model sometimes returns topics as bare strings or nested
+            # lists instead of objects. Drop them rather than dying on
+            # t.get() - a malformed topic is not worth losing the run over.
+            if not isinstance(t, dict):
+                print(f"[drop] malformed topic entry ({type(t).__name__}): "
+                      f"{str(t)[:60]!r}")
+                continue
             err = _validate(t)
             if err:
                 print(f"[drop] {t.get('topic', '?')[:48]!r} — {err}")
