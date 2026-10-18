@@ -304,11 +304,10 @@ def _build_prompt(topic: dict[str, Any], prior_anchors: list[str],
     close_hints = ", ".join(P.CLOSE_TARGET_HINTS)
     # The topic decides kind; fall back to personal so the link rules stay
     # strict when the topic is missing the field.
-    kind = str(topic.get("kind") or "personal").strip().lower()
-    if kind not in ("personal", "general"):
-        kind = "personal"
+    kind = P.normalise_kind(topic.get("kind"))
     site_hints = ", ".join(sorted(P.SITE_TARGETS))
     portfolio_domain = P.PORTFOLIO_DOMAIN
+    tech_take_rules = (TECH_TAKE_RULES if kind == "tech_take" else "")
 
     return f"""{P.ground_truth()}
 
@@ -367,6 +366,7 @@ THIS POST IS "{kind}". That decides where the links go:
 - At least one of the two links MUST resolve to a page on
   {portfolio_domain}. This is checked mechanically and the post is rejected
   otherwise. Linking only to GitHub is not acceptable.
+{tech_take_rules}
 
 HOW TO PLACE A LINK:
 Put the literal token [[LINK1]] or [[LINK2]] inside the paragraph text, exactly
@@ -901,6 +901,32 @@ a debugging story, or a stack/tool they did not use. You are expanding
 explanation, not writing biography. If a claim cannot be made without
 inventing something, write it generically instead."""
 
+TECH_TAKE_RULES = """
+
+THIS IS A TECH-TAKE POST. You have no internet access and no way to check
+anything current. Therefore:
+
+- NEVER state a model name with a version number, a release date, a benchmark
+  score, a price, or a quota as a fact. You will get it wrong, and it will be
+  wrong again within weeks.
+- NEVER write it as news reporting. No "recently", "last month", "just
+  announced", "since the latest release".
+- Write an evergreen FRAMEWORK instead: what to check, what to compare, how to
+  decide, what questions to ask before switching. The reader applies it to
+  whatever tool is current that week.
+- You MAY speak in the first person about how the writer THINKS about this
+  ("how I decide whether something is worth learning"), as long as it is an
+  opinion or a method, not a claim that something happened at a dated time.
+- A sentence naming a specific version, date, benchmark number or price is
+  checked mechanically and REJECTS the post. Examples of what gets rejected:
+  "version 3.5 was released in March", "it scores 12% higher on the benchmark",
+  "the API now costs $20 per month".
+
+BAD (rejected): "GPT-5 came out in June and benchmarks 8% above the last one."
+GOOD (accepted): "When a new model lands, the number everyone quotes first is
+  the one I trust least. Here is what I check before I switch anything."
+"""
+
 EXPAND_FEEDBACK = """
 The previous expansion was not enough. Go further:
 - Every section must now have at least 2 substantial paragraphs.
@@ -1155,11 +1181,8 @@ def generate_post(topic: dict[str, Any], max_attempts: int = 3,
         # of its own, but it must not be able to upgrade a general explainer to
         # "personal" (which re-arms the strict first-person tripwires) or the
         # reverse. Topic wins, and anything unrecognised falls back to personal.
-        post["kind"] = (str(topic.get("kind") or "").strip().lower()
-                        or str(post.get("kind") or "").strip().lower()
-                        or "personal")
-        if post["kind"] not in ("personal", "general"):
-            post["kind"] = "personal"
+        post["kind"] = P.normalise_kind(
+            topic.get("kind") or post.get("kind") or "personal")
         _normalize_post(post)
 
         # --- cheap deterministic repairs before any retry ---

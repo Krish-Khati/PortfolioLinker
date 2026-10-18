@@ -10,6 +10,7 @@ If you build something new or correct a description, edit it here only.
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlparse
 
 # ---------------------------------------------------------------- identity
@@ -157,6 +158,84 @@ BODY_TARGET_HINTS = [
 ]
 CLOSE_TARGET_HINTS = ["home", "projects", "blog", "github"]
 
+# --------------------------------------------- tech news / AI developments
+# These get their own kind because they need a stricter fabrication rule than
+# any other category.
+#
+# The writer has no live internet access. A post that states a version number,
+# a release date or a benchmark score is therefore unverifiable at the moment
+# of writing and actively wrong within weeks. So this category is written as
+# evergreen frameworks ("how to evaluate a new tool") rather than as news
+# ("why model X beat Y on benchmark Z"), and fabrication.py hard-fails any
+# dated/versioned factual claim in a post of this kind.
+TECH_TAKE_THEMES: list[str] = [
+    "how to evaluate a new AI tool before you adopt it",
+    "what actually matters when comparing coding assistants",
+    "a framework for deciding whether a new model is worth switching to",
+    "how to read an AI benchmark without being misled by it",
+    "why dev tool churn is expensive even when the tool is free",
+    "how to keep up with fast-moving AI news without losing a week",
+    "what to check when a model release changes your workflow",
+    "the difference between a model update that matters and one that does not",
+    "how to sanity-check a tool's own claims about itself",
+    "when it is worth rebuilding around a new capability",
+]
+
+# Every kind a post or topic may carry. Centralised so generate_post,
+# topic_picker and fabrication cannot drift apart.
+VALID_KINDS: set[str] = {"personal", "general", "tech_take"}
+
+
+def normalise_kind(value: Any, default: str = "personal") -> str:
+    """Coerce a kind to one of VALID_KINDS, falling back to the strict default."""
+    k = str(value or "").strip().lower()
+    return k if k in VALID_KINDS else default
+
+
+# Kinds that must never assert a checkable fact about the present-day world.
+UNVERIFIABLE_FACT_KINDS = {"tech_take"}
+
+
+def tech_take_kind(theme: str) -> bool:
+    """True if this theme belongs to the tech-news category."""
+    return theme.strip() in {t.strip() for t in TECH_TAKE_THEMES}
+
+
+# Distinctive markers that force kind="tech_take" regardless of what the model
+# claims the kind is. Asked politely, the model labels these topics "general"
+# - which silently disarms the fact-claim tripwires, so it is decided here
+# instead. Matched against the topic title and angle together, and the phrases
+# are specific enough not to catch ordinary SEO or tutorial topics.
+TECH_TAKE_MARKERS: tuple[str, ...] = (
+    "coding assistant",
+    "ai coding",
+    "new model",
+    "new ai tool",
+    "ai tool",
+    "ai benchmark",
+    "benchmark",
+    "dev tool churn",
+    "tool churn",
+    "new release",
+    "model release",
+    "model update",
+    "new capability",
+    "worth switching",
+    "switch to",
+    "llm",
+    "large language model",
+)
+
+
+def classify_kind(topic: str, angle: str = "",
+                  claimed: str = "") -> str:
+    """Return the kind for a topic, overriding the model's claim if needed."""
+    blob = f"{topic} {angle}".lower()
+    if any(marker in blob for marker in TECH_TAKE_MARKERS):
+        return "tech_take"
+    return normalise_kind(claimed)
+
+
 # ------------------------------------------------- topics ALREADY published
 # Scraped from the portfolio sitemap on 2026-10-16. Never repeat these angles,
 # even though posted_topics.json has no record of them yet - the ledger only
@@ -207,6 +286,22 @@ INTERESTS = [
     "video editing fundamentals for talking-head and screen content",
     "email marketing fundamentals for a small creator audience",
     "landing page structure and the handful of elements that matter",
+
+    # --- tech news / AI developments ---
+    # Deliberately framed as evergreen decision frameworks, never as reporting.
+    # See TECH_TAKE_THEMES below and the fact-claim tripwire in fabrication.py:
+    # the writer has no live internet access, so anything dated or versioned
+    # in these posts is unverified and decays fast.
+    "how to evaluate a new AI tool before you adopt it",
+    "what actually matters when comparing coding assistants",
+    "a framework for deciding whether a new model is worth switching to",
+    "how to read an AI benchmark without being misled by it",
+    "why dev tool churn is expensive even when the tool is free",
+    "how to keep up with fast-moving AI news without losing a week",
+    "what to check when a model release changes your workflow",
+    "the difference between a model update that matters and one that does not",
+    "how to sanity-check a tool's own claims about itself",
+    "when it is worth rebuilding around a new capability",
 ]
 
 # Topics that need no personal story. The generator is told these explicitly

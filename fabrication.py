@@ -70,6 +70,99 @@ CAPABILITY_PATTERNS: list[tuple[str, str]] = [
      r"translat\w+[^.]{0,60}\bsampl"),
 ]
 
+# --------------------------------------------------------------- tech takes
+# A tech_take post must not assert a checkable fact about the present-day
+# world. The writer has no live internet access, so a version number, a
+# release date or a benchmark figure is unverifiable the moment it is written
+# and wrong within weeks. These fire only on tech_take posts: elsewhere the
+# same phrasing is ordinary prose ("prices range from $10 to $20").
+#
+# Each pattern is (label, regex). The point is to force a human to confirm,
+# not to decide whether the claim happens to be right.
+FACT_CLAIM_PATTERNS: list[tuple[str, str]] = [
+    # Named release with a version number.
+    ("cites a model version",
+     r"\b(?:version|v\.?|release|build)\s*\.?\s*\d+(?:\.\d+){1,3}\b"
+     r"|\bv\d+\.\d+\b"
+     r"|\b\d+\.\d+(?:\.\d+)?\s*(?:preview|rc|beta|alpha|release)\b"),
+    # A release/announcement date.
+    ("cites a release date",
+     r"\b(?:released|launch(?:ed)?|announced|shipped|rolled out|"
+     r"debuted|introduced)\s+(?:on|in)\s+"
+     r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+     r"|\b(?:january|february|march|april|may|june|july|august|"
+     r"september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?"
+     r"[,]?\s*\d{4}\b"
+     r"|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:january|february|march|"
+     r"april|may|june|july|august|september|october|november|december)"
+     r"\s+\d{4}\b"),
+    # A benchmark figure or leaderboard claim.
+    ("cites a benchmark score",
+     r"\b(?:benchmark|benchmarks|bench|elo|score|scores|leaderboard|"
+     r"ranking|ranked)\w*\b[^.]{0,60}?\b\d+(?:\.\d+)?\s*%?"
+     r"|\b\d+(?:\.\d+)?\s*%?\s*(?:higher|lower|better|worse|more|less)"
+     r"\s+(?:than|on)\b"
+     r"|\boutperform\w*\b[^.]{0,50}\b\d"
+     r"|\b\d+(?:\.\d+)?\s*%\s*(?:better|worse|higher|lower)\b"),
+    # A specific price or quota stated as current fact.
+    ("cites a current price",
+     r"[$€£]\s?\d+(?:[.,]\d{2})?\s*(?:/\s*(?:mo|month|yr|year|user|token|"
+     r"1k|1m))?\b[^.]{0,40}\b(?:now|currently|today|as of)\b"
+     r"|\b(?:costs?|priced at|charges)\s+[$€£]\s?\d+"),
+    # Named-model-with-claims, e.g. attributing a capability to a specific
+    # product by name and version.
+    ("cites a named model release as fact",
+     r"\b(?:gpt|claude|gemini|llama|qwen|mistral|grok|deepseek|"
+     r"copilot|codex|cursor|devin)\b[^.]{0,40}\b(?:can|does|now|just|already)\b"),
+    # A named product carrying a bare version number: "Claude 3.5", "GPT-4",
+    # "Gemini 2.0". The keyword-prefixed pattern above misses these.
+    ("names a model with a version number",
+     r"\b(?:gpt|chatgpt|claude|gemini|llama|qwen|mistral|grok|deepseek|"
+     r"copilot|codex|cursor|devin)\s*[-_]?\d+(?:\.\d+)+\b"
+     r"|\b(?:gpt|chatgpt)\s*[-_]?\d+\b(?!\.)"),
+    # A stated context window or capability figure.
+    ("cites a capability figure",
+     r"\b\d+\s?[kKmM]\s*(?:tokens?|context|parameters?)\b"
+     r"|\bcontext window of\s+\d+"),
+]
+
+# Kinds that must not carry dated or versioned factual assertions.
+UNVERIFIABLE_FACT_KINDS = {"tech_take"}
+
+
+def scan_fact_claims(post: dict[str, Any], kind: str) -> list[dict[str, str]]:
+    """Return dated/versioned factual claims. Empty unless kind == tech_take."""
+    if kind not in UNVERIFIABLE_FACT_KINDS:
+        return []
+
+    chunks: list[tuple[str, str]] = [("lede", post.get("lede", "") or "")]
+    for i, s in enumerate(post.get("sections", []) or []):
+        label = s.get("heading") or f"section {i + 1}"
+        for p in s.get("paragraphs", []) or []:
+            chunks.append((label, p or ""))
+
+    findings: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for label, text in chunks:
+        if not text:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            s = sentence.strip()
+            if not s:
+                continue
+            for name, pattern in FACT_CLAIM_PATTERNS:
+                if re.search(pattern, s, re.I):
+                    key = (name, s[:70])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    findings.append({
+                        "kind": name,
+                        "section": label,
+                        "quote": s[:240],
+                    })
+    return findings
+
 # Hedge words that turn a definite claim into a hypothetical. A post full of
 # these may be safe, but it is also probably vague.
 HEDGES = re.compile(r"\b(?:if you were to|suppose|imagine you|in theory|"
@@ -94,12 +187,17 @@ PERSONAL_ONLY_RULES = {"first-person practice claim"}
 def scan(post: dict[str, Any], kind: str | None = None) -> dict[str, Any]:
     """Return every tripwire that fires, with the sentence that fired it.
 
-    `kind` is "personal" or "general" (general topics are explainers with no
-    first-person history). Personal is the safe default when unknown.
+    `kind` is "personal", "general" (explainer, no first-person history) or
+    "tech_take" (an evergreen framework post about AI tooling). Personal is the
+    safe default when unknown.
+
+    Uses profile.normalise_kind so the three kinds live in one place. This
+    used to hardcode ("personal", "general") and silently rewrote a tech_take
+    post to personal, which quietly disabled the fact-claim tripwires.
     """
-    kind = (str(kind or post.get("kind") or "").strip().lower() or "personal")
-    if kind not in ("personal", "general"):
-        kind = "personal"
+    import profile as P
+
+    kind = P.normalise_kind(kind or post.get("kind"))
     chunks: list[tuple[str, str]] = [("lede", post.get("lede", "") or "")]
     for i, s in enumerate(post.get("sections", []) or []):
         label = s.get("heading") or f"section {i + 1}"
@@ -157,6 +255,23 @@ def scan(post: dict[str, Any], kind: str | None = None) -> dict[str, Any]:
         "findings": findings,
         "kind": kind,
     }
+
+
+def scan_all(post: dict[str, Any], kind: str | None = None) -> dict[str, Any]:
+    """scan() plus the tech_take fact-claim tripwires, as one result.
+
+    Kept separate from scan() so the existing callers and tests keep their
+    current behaviour, and so it is obvious at the call site that a tech_take
+    post is held to a stricter standard.
+    """
+    result = scan(post, kind)
+    facts = scan_fact_claims(post, result["kind"])
+    if facts:
+        result["findings"] = result["findings"] + facts
+        result["count"] = len(result["findings"])
+        result["clean"] = False
+    result["fact_claims"] = len(facts)
+    return result
 
 
 def verdict_text(result: dict[str, Any]) -> str:

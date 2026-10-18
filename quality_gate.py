@@ -255,7 +255,7 @@ def review(post: dict[str, Any], image: dict[str, Any] | None) -> dict[str, Any]
 
     import fabrication
 
-    scan = fabrication.scan(post, post.get("kind"))
+    scan = fabrication.scan_all(post, post.get("kind"))
     verdicts["FABRICATION_TRIPWIRES"] = 0 if scan["clean"] else 9
     if not scan["clean"]:
         for f in scan["findings"]:

@@ -199,7 +199,7 @@ def main() -> int:
         print("[gate] passed")
 
     # ---- hard fabrication check -----------------------------------------
-    scan = fabrication.scan(post)
+    scan = fabrication.scan_all(post, post.get("kind"))
     if not scan["clean"]:
         print("\n[!] fabrication tripwires fired; not publishing:")
         print(fabrication.verdict_text(scan))

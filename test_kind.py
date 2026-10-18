@@ -15,6 +15,7 @@ import copy
 import sys
 
 import fabrication
+import profile as P
 
 PASSES, FAILS = 0, 0
 
@@ -188,6 +189,76 @@ check_true("invented metric caught as general",
 check_true("invented incident caught as general",
            any("debugging" in f["kind"] or "measured" in f["kind"]
                for f in rg["findings"]))
+
+print("\n9. tech_take posts may not assert dated or versioned facts")
+# The writer has no internet access, so a version number, release date,
+# benchmark figure or price is unverifiable the moment it is written.
+_TT = {
+    "title": "t", "slug": "s", "lede": "lead", "image_query": "q",
+    "alt_text": "a", "meta_description": "m" * 155, "tags": ["a"],
+    "backlinks": [{"id": "LINK1", "anchor": "x y", "target": "home",
+                   "placement": "body"},
+                  {"id": "LINK2", "anchor": "z w", "target": "projects",
+                   "placement": "close"}],
+}
+
+
+def _tt(sentences, kind):
+    p = dict(_TT)
+    p["sections"] = [{"heading": f"H{i}", "paragraphs": [s]}
+                     for i, s in enumerate(sentences)]
+    return fabrication.scan_fact_claims(p, kind)
+
+
+_MUST_FIRE = [
+    ("GPT-5 came out in June and benchmarks 8% above the last one.", "benchmark"),
+    ("Version 3.5 shipped in March 2025 with a 40% improvement.", "model version"),
+    ("Claude 3.5 can now handle 200k tokens of context.", "version number"),
+    ("Gemini 2.0 does handle images now.", "version number"),
+    ("The model now costs $20 per month for the pro tier.", "price"),
+    ("Cursor 1.7 was released on 12th March 2025.", "release date"),
+    ("On the SWE-bench leaderboard it scores 71.2% and ranks third.", "benchmark"),
+    ("It outperforms the previous release by 15% on latency.", "benchmark"),
+]
+for sentence, expect in _MUST_FIRE:
+    hits = _tt([sentence], "tech_take")
+    check_true(f"tech_take flags: {sentence[:44]!r}",
+               any(expect in h["kind"] for h in hits))
+
+_MUST_NOT = [
+    "When a new model lands, the number everyone quotes first is the one I "
+    "trust least.",
+    "Benchmarks measure what someone chose to measure.",
+    "Pricing pages are written to make the middle tier look reasonable.",
+    "A release note is a marketing document first and a changelog second.",
+    "Version control basics matter more than any particular release.",
+]
+for sentence in _MUST_NOT:
+    check(f"evergreen take allowed: {sentence[:40]!r}",
+          len(_tt([sentence], "tech_take")), 0)
+
+print("\n10. the fact rules fire on tech_take only")
+_all = [s for s, _ in _MUST_FIRE]
+for kind in ("personal", "general"):
+    total = sum(len(_tt([s], kind)) for s in _all)
+    check(f"no fact findings as {kind}", total, 0)
+
+_tt_post = dict(_TT)
+_tt_post["kind"] = "tech_take"
+_tt_post["sections"] = [{"heading": "H",
+                         "paragraphs": ["GPT-5 came out in June."]}]
+_r = fabrication.scan_all(_tt_post)
+check_true("scan_all catches it as tech_take",
+           not _r["clean"] and _r["fact_claims"] >= 1)
+_tt_post["kind"] = "general"
+_r2 = fabrication.scan_all(_tt_post)
+check("scan_all ignores it as general", _r2["clean"], True)
+
+check("tech_take is a valid kind", "tech_take" in P.VALID_KINDS, True)
+check("unknown kinds fall back to personal",
+      P.normalise_kind("personal|general"), "personal")
+check("tech_take survives normalisation",
+      P.normalise_kind(" Tech_Take "), "tech_take")
 
 print("\n" + "=" * 52)
 print(f"  {PASSES} passed, {FAILS} failed")

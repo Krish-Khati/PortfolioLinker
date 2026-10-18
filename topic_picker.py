@@ -40,7 +40,12 @@ Every topic must be:
 - honestly writable from the background provided
 - distinct from the topics already used
 
-Add a "kind" field to each topic: "personal" or "general"."""
+Add a "kind" field to each topic: "personal", "general", or "tech_take".
+"tech_take" is for evergreen framework posts about AI and dev tooling - how to
+evaluate a tool, how to compare options, how to read a benchmark. It is NOT for
+news reporting, and it must never contain a version number, release date,
+benchmark score or price, because those cannot be checked. Prefer "tech_take"
+for anything in that category rather than calling it "general"."""
 
 
 def _bullets(items: list[str], indent: str = "  - ") -> str:
@@ -135,7 +140,7 @@ Return exactly this JSON shape:
       "angle": "2-3 sentences on what the post covers",
       "image_query": "specific pixabay search phrase",
       "difficulty": "easy|medium|hard",
-      "kind": "personal|general",
+      "kind": "personal|general|tech_take",
       "why_it_fits": "one short line"
     }}
   ]
@@ -153,14 +158,14 @@ def _validate(t: dict[str, Any]) -> str | None:
         return "topic too short"
 
     # `kind` decides which fabrication tripwires arm later, so it has to be a
-    # real value before this topic reaches the pool. The model sometimes echoes
-    # the literal "personal|general" from the schema. Unknown values become
-    # "personal" - the strict, safe default.
-    t["kind"] = (str(t.get("kind") or "").strip().lower() or "personal")
-    if t["kind"] not in ("personal", "general"):
-        print(f"[warn] topic {t['topic'][:40]!r} had kind "
-              f"{t.get('kind')!r}; defaulting to personal")
-        t["kind"] = "personal"
+    # real value before this topic reaches the pool. Tech-news topics are
+    # classified from their own wording rather than taken from the model,
+    # which reliably labels them "general" and would quietly disarm the
+    # fact-claim tripwires. Everything else falls back to the strict default.
+    before = t.get("kind")
+    t["kind"] = P.classify_kind(t.get("topic", ""), t.get("angle", ""), before)
+    if t["kind"] != before:
+        print(f"[kind] {t['topic'][:44]!r}: {before!r} -> {t['kind']!r}")
 
     generic_images = {"business", "technology", "success", "work", "digital",
                       "future", "abstract", "background", "office"}
