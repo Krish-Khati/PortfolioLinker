@@ -1210,6 +1210,20 @@ def validate_alt(post: dict[str, Any]) -> str | None:
     return None
 
 
+def _looks_truncated(raw: str | None) -> bool:
+    """True if the reply has an opening brace but never closed it.
+
+    That is the signature of hitting the output token limit, which needs a
+    different recovery from the model simply writing something invalid.
+    """
+    text = (raw or "").replace("```json", "").replace("```", "").strip()
+    if not text:
+        return False
+    opens = text.count("{")
+    closes = text.count("}")
+    return opens > closes
+
+
 def _parse(raw: str) -> dict[str, Any] | None:
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     start, end = cleaned.find("{"), cleaned.rfind("}")
@@ -1262,10 +1276,24 @@ def generate_post(topic: dict[str, Any], max_attempts: int = 3,
 
         post = _parse(raw)
         if post is None:
-            errors = ["model returned unparseable JSON"]
+            truncated = _looks_truncated(raw)
+            errors = ["model response was truncated mid-JSON"
+                      if truncated else "model returned unparseable JSON"]
+            print(f"[parse] {errors[0]} ({len(raw or '')} chars)")
+            # A truncated response is caused by running out of output budget,
+            # so repeating the identical prompt reproduces it identically.
+            # Observed on a GitHub run: retries 2 and 3 both failed the same
+            # way and the pipeline saved an empty 'untitled' draft. Ask for
+            # something materially shorter instead.
             prompt = base + (
-                "\n\nIMPORTANT: your last reply was not valid JSON. Return only "
-                "the JSON object, nothing else."
+                "\n\nIMPORTANT: your last reply was CUT OFF before the JSON "
+                "closed, so it could not be used. Produce a SHORTER post:\n"
+                "  - exactly 3 sections, never more\n"
+                "  - 2 paragraphs per section\n"
+                "  - about 650 words in total\n"
+                "  - meta_description under 155 characters\n"
+                "The reply must be ONE complete JSON object that ends with a "
+                "closing brace. Do not start your answer with any prose."
             )
             continue
 
@@ -1334,10 +1362,16 @@ def generate_post(topic: dict[str, Any], max_attempts: int = 3,
 
     # If the last attempt failed to parse, `post` is still None. Hand back a
     # well-formed stub so callers never hit a NoneType.
+    #
+    # The title is the topic, not "". An empty title slugified to "untitled",
+    # so an unattended run whose model went down produced an artifact called
+    # untitled.html with no indication of what had failed or why.
     if post is None:
         post = {
-            "topic": topic["topic"], "title": "", "slug": "", "lede": "",
-            "sections": [], "backlinks": [], "tags": [],
+            "topic": topic["topic"],
+            "title": f"FAILED: {topic['topic']}",
+            "slug": textnorm.slugify(topic["topic"]),
+            "lede": "", "sections": [], "backlinks": [], "tags": [],
             "meta_description": "", "image_query": "", "alt_text": "",
         }
     post["errors"] = errors or ["generation did not produce a valid post"]

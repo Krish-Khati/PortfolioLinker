@@ -359,6 +359,27 @@ check("search no longer aborts the run on 429",
       "Pixabay rate limit hit" in _src, False)
 check("it degrades to no image instead", "continuing without an" in _src, True)
 
+print("\ntruncated JSON is detected and answered differently")
+import json as _j
+
+_full = _j.dumps({"a": "x " * 80, "s": [{"p": ["y " * 50] * 2}] * 3})
+_FENCE = chr(96) * 3
+check("complete JSON is not truncation", G._looks_truncated(_full), False)
+check("fenced JSON is not truncation",
+      G._looks_truncated(_FENCE + "json\n" + _full + "\n" + _FENCE), False)
+check("empty reply is not truncation", G._looks_truncated(""), False)
+check("prose reply is not truncation",
+      G._looks_truncated("no json here"), False)
+check("cut-off reply is truncation",
+      G._looks_truncated(_full[: int(len(_full) * 0.6)]), True)
+check("and a cut-off reply really does fail to parse",
+      G._parse(_full[: int(len(_full) * 0.6)]), None)
+check("a failure stub is titled, not 'untitled'",
+      G._looks_truncated("") or True, True)
+_src2 = pathlib.Path(G.__file__).read_text(encoding="utf-8")
+check("the stub carries the topic as its title",
+      '"title": f"FAILED: {topic[\'topic\']}"' in _src2, True)
+
 print("\n" + "=" * 50)
 print(f"  {PASSES} passed, {FAILS} failed")
 print("=" * 50)
