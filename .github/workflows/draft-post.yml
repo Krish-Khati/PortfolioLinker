@@ -1,17 +1,27 @@
 name: draft-post
 
-# Runs the PortfolioLinker pipeline on a schedule and on demand.
+# Runs the PortfolioLinker pipeline on a schedule and on demand, and publishes
+# automatically when - and only when - the draft clears the quality gate.
 #
-# This workflow NEVER publishes. main.py only ever writes to drafts/, and
-# PUBLISH_LIVE is pinned to "false" in the job env below regardless of what
-# any secret says. Publishing stays a deliberate local action
-# (python publish_blogger.py --draft ... --publish).
+# The gate is the only thing standing between an automated blog and an
+# automated mistake, so nothing here relaxes it. A draft that does not pass is
+# saved to drafts/ as a review artifact and the run still succeeds, quietly,
+# with nothing published. main.py's exit code is the decision:
+#   0 = gate passed -> publish
+#   1 = gate failed -> hold for review, publish nothing
+#   2 = provider quota exhausted -> hold for review, publish nothing
+#
+# PUBLISH_LIVE is set to true HERE, in the throwaway .env this job builds from
+# secrets. It is never a secret and never comes from your local .env, which
+# stays false so local testing is still draft-only by default.
 
 on:
   schedule:
-    # Tue and Fri, 09:00 UTC. GitHub cron is UTC-only and runs on best effort,
-    # so expect some drift.
-    - cron: "17 9 * * 2"
+    # Mon, Wed and Fri, 09:00 UTC. GitHub cron is UTC-only, runs on best effort
+    # (expect drift, and occasional skipped runs), and queues every repo's
+    # scheduled jobs into the same minute - hence :17 rather than :00.
+    - cron: "17 9 * * 1"
+    - cron: "17 9 * * 3"
     - cron: "17 9 * * 5"
   workflow_dispatch:
     inputs:
@@ -20,8 +30,8 @@ on:
         required: false
         type: string
 
-# Two posts a week, never more. A manual run can overlap a scheduled one, so
-# let the newest finish rather than cancelling it mid-API-call.
+# Never let two runs publish at once. A manual run overlapping a scheduled one
+# should queue behind it, not cancel it half way through an API call.
 concurrency:
   group: draft-post
   cancel-in-progress: false
@@ -32,7 +42,8 @@ permissions:
 jobs:
   draft:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Generous, because generation + gate + publish is several LLM round trips.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -66,19 +77,30 @@ jobs:
           PORTFOLIO_URL=${{ secrets.PORTFOLIO_URL }}
           PORTFOLIO_BLOG_PAGE_URL=${{ secrets.PORTFOLIO_BLOG_PAGE_URL }}
           GITHUB_PROFILE_URL=${{ secrets.PROFILE_GITHUB_URL }}
-          PUBLISH_LIVE=false
+          PUBLISH_LIVE=true
           EOF
           echo "::add-mask::$(grep -E 'KEY|SECRET|TOKEN' .env | tr '\n' ' ')"
 
       - name: Generate a draft
-        # Exit code 1 = a draft was produced but did not clear the gate. That
-        # is not a workflow failure, so it must not mark the run red.
+        id: gen
+        # The exit code is the publish decision, so it must survive. `|| true`
+        # would have thrown away exactly the signal we need here.
         run: |
+          set +e
           if [ -n "${{ inputs.topic }}" ]; then
-            python main.py --topic "${{ inputs.topic }}" || true
+            python main.py --topic "${{ inputs.topic }}"
           else
-            python main.py || true
+            python main.py
           fi
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          case "$rc" in
+            0) echo "gate PASSED - eligible to publish" ;;
+            1) echo "::notice::gate did not pass - nothing will be published" ;;
+            2) echo "::notice::provider quota exhausted - nothing published" ;;
+            *) echo "::warning::unexpected exit code $rc" ;;
+          esac
+          exit 0
 
       - name: Verify a draft was produced
         run: |
@@ -87,6 +109,24 @@ jobs:
             exit 1
           fi
           echo "latest draft: $(cat drafts/LATEST.txt)"
+
+      - name: Publish the draft
+        if: steps.gen.outputs.exit_code == '0'
+        # publish_blogger.py re-runs the quality gate and re-checks the
+        # fabrication tripwires before it creates anything. Nothing is skipped
+        # here: a second independent gate that disagrees simply blocks the
+        # publish, which is the correct direction to fail.
+        run: |
+          stem="$(cat drafts/LATEST.txt)"
+          echo "publishing drafts/${stem}.json"
+          python publish_blogger.py --draft "drafts/${stem}.json" --publish
+
+      - name: Hold for review
+        if: steps.gen.outputs.exit_code != '0'
+        run: |
+          echo "::notice::The draft did not clear the quality gate, so"
+          echo "::notice::nothing was published. It is attached to this run"
+          echo "::notice::as an artifact for you to look at."
 
       - name: Upload drafts and images as an artifact
         if: always()
