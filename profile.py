@@ -126,7 +126,7 @@ ANCHOR_EXAMPLES: dict[str, list[str]] = {
     "home": ["what I have been building", "where I keep my notes on building",
              "the site I maintain"],
     "projects": ["the four apps I have finished",
-                 "the projects listed on my site",
+                 "the project list I keep updating",
                  "what I have actually shipped"],
     "blog": ["where I write up what I learn",
              "my longer notes on building software",

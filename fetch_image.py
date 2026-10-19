@@ -75,31 +75,86 @@ Examples:
 
 
 # ------------------------------------------------------------------ search
+# Pixabay allows 100 requests/minute on a free key. A scheduled runner making
+# search + download calls back to back can trip it, and search used to raise
+# SystemExit on 429 - which is not caught by `except Exception`, so a rate
+# limit killed the whole cron run and produced no draft at all. Retry with
+# backoff instead, and degrade to "no image" rather than aborting.
+SEARCH_RETRIES = 4
+SEARCH_BACKOFF = (3, 8, 20)
+DOWNLOAD_RETRIES = 3
+_last_request_at: float = 0.0
+MIN_SECONDS_BETWEEN_CALLS = 1.0
+
+
+def _throttle() -> None:
+    """Keep at least MIN_SECONDS_BETWEEN_CALLS between Pixabay calls."""
+    global _last_request_at
+    import time
+
+    wait = _last_request_at + MIN_SECONDS_BETWEEN_CALLS - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_request_at = time.monotonic()
+
+
 def search(query: str, per_page: int = 20, page: int = 1) -> list[dict[str, Any]]:
+    """Search Pixabay, retrying with backoff on a 429.
+
+    Returns [] on a persistent rate limit rather than aborting the run: a post
+    with no hero image is recoverable by hand, a cron run that dies having
+    written nothing is not.
+    """
+    import time
+
     import requests
 
     key = config.env("PIXABAY_API_KEY")
     if not key:
         raise SystemExit("[!] PIXABAY_API_KEY is missing from .env")
 
-    resp = requests.get(
-        PIXABAY_API,
-        params={
-            "key": key,
-            "q": query,
-            "image_type": "photo",       # no illustrations/vectors
-            "safesearch": "true",
-            "orientation": "horizontal",  # matches the post hero slot
-            "per_page": min(per_page, 200),
-            "page": page,
-            "order": "popular",
-        },
-        timeout=30,
-    )
-    if resp.status_code == 429:
-        raise SystemExit("[!] Pixabay rate limit hit. Wait a minute and retry.")
-    resp.raise_for_status()
-    return resp.json().get("hits", [])
+    for attempt in range(1, SEARCH_RETRIES + 1):
+        _throttle()
+        resp = requests.get(
+            PIXABAY_API,
+            params={
+                "key": key,
+                "q": query,
+                "image_type": "photo",       # no illustrations/vectors
+                "safesearch": "true",
+                "orientation": "horizontal",  # matches the post hero slot
+                "per_page": min(per_page, 200),
+                "page": page,
+                "order": "popular",
+            },
+            timeout=30,
+        )
+
+        if resp.status_code == 429:
+            if attempt < SEARCH_RETRIES:
+                delay = SEARCH_BACKOFF[min(attempt - 1, len(SEARCH_BACKOFF) - 1)]
+                print(f"[pixabay] rate limited, retrying in {delay}s "
+                      f"(attempt {attempt}/{SEARCH_RETRIES})")
+                time.sleep(delay)
+                continue
+            print("[warn] Pixabay rate limit persisted; continuing without an "
+                  "image")
+            return []
+
+        if resp.status_code >= 500 and attempt < SEARCH_RETRIES:
+            delay = SEARCH_BACKOFF[min(attempt - 1, len(SEARCH_BACKOFF) - 1)]
+            print(f"[pixabay] server {resp.status_code}, retrying in {delay}s")
+            time.sleep(delay)
+            continue
+
+        if resp.status_code != 200:
+            print(f"[warn] Pixabay search failed ({resp.status_code}); "
+                  "continuing without an image")
+            return []
+
+        return resp.json().get("hits", [])
+
+    return []
 
 
 def best_source(hit: dict[str, Any]) -> tuple[str | None, str]:
@@ -231,21 +286,43 @@ def download(hit: dict[str, Any], slug: str) -> dict[str, Any]:
         print(f"[info] cached: {dest.name}")
     else:
         print(f"[info] fetching {hit.get('_source_note', url)}")
-        with requests.get(url, stream=True, timeout=120) as r:
-            r.raise_for_status()
-            declared = int(r.headers.get("content-length") or 0)
-            if declared and declared > MAX_DOWNLOAD_BYTES:
+        raw = None
+        for attempt in range(1, DOWNLOAD_RETRIES + 1):
+            _throttle()
+            try:
+                with requests.get(url, stream=True, timeout=120) as r:
+                    if r.status_code == 429 or r.status_code >= 500:
+                        raise requests.RequestException(
+                            f"HTTP {r.status_code}")
+                    r.raise_for_status()
+                    declared = int(r.headers.get("content-length") or 0)
+                    if declared and declared > MAX_DOWNLOAD_BYTES:
+                        raise SystemExit(
+                            f"[!] source is {declared / 1e6:.1f} MB, over the "
+                            f"{MAX_DOWNLOAD_BYTES / 1e6:.0f} MB cap"
+                        )
+                    buf, total = bytearray(), 0
+                    for chunk in r.iter_content(65536):
+                        buf.extend(chunk)
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            raise SystemExit("[!] download exceeded the size cap")
+                raw = bytes(buf)
+                break
+            except SystemExit:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if attempt < DOWNLOAD_RETRIES:
+                    delay = SEARCH_BACKOFF[min(attempt - 1,
+                                                len(SEARCH_BACKOFF) - 1)]
+                    print(f"[pixabay] download failed ({exc.__class__.__name__}"
+                          f"), retrying in {delay}s")
+                    import time as _t
+                    _t.sleep(delay)
+                    continue
                 raise SystemExit(
-                    f"[!] source is {declared / 1e6:.1f} MB, over the "
-                    f"{MAX_DOWNLOAD_BYTES / 1e6:.0f} MB cap"
-                )
-            raw, total = bytearray(), 0
-            for chunk in r.iter_content(65536):
-                raw.extend(chunk)
-                total += len(chunk)
-                if total > MAX_DOWNLOAD_BYTES:
-                    raise SystemExit("[!] download exceeded the size cap")
-        raw = bytes(raw)
+                    f"[!] could not download the image after "
+                    f"{DOWNLOAD_RETRIES} attempts: {exc}")
 
         # open, downscale, re-encode
         with Image.open(__import__("io").BytesIO(raw)) as im:

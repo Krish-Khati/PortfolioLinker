@@ -504,7 +504,7 @@ def _repair(post: dict[str, Any]) -> dict[str, Any]:
 
     md = post.get("meta_description")
     if md:
-        fixed = fit_meta(md)
+        fixed = fit_meta(md, extra=post.get("lede", "") or "")
         if fixed:
             post["meta_description"] = fixed
 
@@ -563,6 +563,15 @@ def _repair_general_links(post: dict[str, Any]) -> dict[str, Any]:
         for example in P.ANCHOR_EXAMPLES.get(target, []):
             key = textnorm.anchor_key(example)
             if key in used or key in recent:
+                continue
+            # The examples are prompt text, so they are not guaranteed to
+            # survive validate(). This one did not: "the projects listed on
+            # my site" contains the banned phrase "my site". Skip anything
+            # that would only be rejected a moment later.
+            if key in ANCHOR_EXACT_BANNED or any(
+                    ph in key for ph in ANCHOR_PHRASE_BANNED):
+                continue
+            if not (MIN_ANCHOR_WORDS <= len(key.split()) <= MAX_ANCHOR_WORDS):
                 continue
             print(f"[repair] general post: close link {close['target']} -> "
                   f"{target}, anchor {close.get('anchor')!r} -> {example!r}")
@@ -860,12 +869,91 @@ def validate(post: dict[str, Any]) -> list[str]:
     return errs
 
 
-def fit_meta(md: str) -> str | None:
-    """Force a meta description into 150-160 chars by trimming at a word boundary.
+ADD_SECTIONS_SYSTEM = """You add missing sections to an unfinished blog post.
+
+You return STRICT JSON only. No markdown fences, no commentary.
+
+The new sections must match the existing ones in tone, length and depth. They
+must not repeat an existing section's point. No linking, no invented
+personal stories, no numbers, no dates."""
+
+
+def _ensure_sections(post: dict[str, Any],
+                     target: int = MIN_SECTIONS) -> dict[str, Any]:
+    """Top up a post that came back with too few sections.
+
+    Observed on a GitHub Actions run: the model returned 2 sections (minimum
+    is 3), and because validate() rejected it the whole draft was thrown away
+    after three full regenerations. Regenerating the entire post to fix a
+    structural count is wasteful, and three attempts did not even manage it.
+
+    So ask for exactly the missing sections and append them. Only ever adds.
+    """
+    sections = post.get("sections") or []
+    if len(sections) >= target:
+        return post
+
+    need = target - len(sections)
+    existing = "\n".join(f"  - {s.get('heading', '')}" for s in sections)
+    title = post.get("title", "")
+    lede = post.get("lede", "")
+
+    print(f"[sections] only {len(sections)} section(s), need {target}; "
+          f"asking for {need} more")
+
+    prompt = f"""{P.ground_truth()}
+
+A blog post titled "{title}" opens with:
+{lede}
+
+It currently has these sections:
+{existing}
+
+Write {need} MORE section(s) that this post is missing. Between them they
+should cover something the reader still needs - not a summary and not a
+conclusion.
+
+Each section: a 2-5 word heading in sentence case, and 2-3 paragraphs of
+80-140 words each. Same plain, direct voice as a real person writing.
+
+Return exactly:
+{{"sections": [{{"heading": "...", "paragraphs": ["...", "..."]}}]}}"""
+
+    try:
+        raw = config.chat(prompt, ADD_SECTIONS_SYSTEM, temperature=0.85,
+                          max_tokens=2000, as_json=True)
+        data = _parse(raw) or {}
+    except config.DailyTokenLimitError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sections] could not add sections: "
+              f"{exc.__class__.__name__}")
+        return post
+
+    extra = coerce_post(data).get("sections") or []
+    added = [s for s in extra if s.get("paragraphs") and s not in sections]
+    if not added:
+        print("[sections] model returned no usable sections to add")
+        return post
+
+    post["sections"] = sections + added[:need]
+    print(f"[sections] added {len(added[:need])} -> "
+          f"{len(post['sections'])} sections")
+    return post
+
+
+def fit_meta(md: str, extra: str = "") -> str | None:
+    """Force a meta description into 150-160 chars, trimming or extending.
 
     The model reliably writes the right idea and the wrong length, and
-    regenerating the whole post over a character count is wasteful. Trimming
-    to the last whole word inside the window preserves meaning.
+    regenerating a whole post over a character count is wasteful.
+
+    Too long: trim at a word boundary inside the window.
+    Too short: append words taken from the post's OWN prose (pass it as
+    `extra`). Nothing is invented - this is the post's own lede being reused,
+    which is what a meta description is for. Previously this returned None and
+    let a retry handle it; on an unattended run that just meant the same
+    rejection three times and a lost draft.
     """
     md = textnorm.meta_safe(md or "")
     if 150 <= len(md) <= 160:
@@ -877,9 +965,38 @@ def fit_meta(md: str) -> str | None:
             window = window[: window.rfind(" ")]
         return window if 150 <= len(window) <= 160 else None
 
-    # too short: the model did not write enough. Only commas give us room to
-    # extend without inventing claims, so give up and let a retry handle it.
-    return None
+    if not extra:
+        return None
+
+    # Extend from the post's own words, skipping ones already used so the
+    # description does not read as a stutter.
+    used = {w.lower().strip(".,;:") for w in md.split()}
+    pool: list[str] = []
+    for word in textnorm.meta_safe(extra).split():
+        bare = word.lower().strip(".,;:")
+        if bare and bare not in used:
+            pool.append(word)
+            used.add(bare)
+
+    grown = md
+    if grown and grown[-1] not in ".!?,;:":
+        # Without a stop the extension runs the two halves together and reads
+        # as broken English: "...click-through rates Search engines read a
+        # sitemap". A period is honest here; the lede is a separate sentence.
+        grown += "."
+    for word in pool:
+        if len(grown) >= 150:
+            break
+        grown = f"{grown} {word}"
+
+    if len(grown) < 150:
+        return None
+    if len(grown) > 160:
+        window = grown[:160]
+        if " " in window:
+            window = window[: window.rfind(" ")]
+        grown = window
+    return grown if 150 <= len(grown) <= 160 else None
 
 
 EXPAND_SYSTEM = """You lengthen a blog post without changing its argument.
@@ -1186,6 +1303,10 @@ def generate_post(topic: dict[str, Any], max_attempts: int = 3,
         _normalize_post(post)
 
         # --- cheap deterministic repairs before any retry ---
+        post = _repair(post)
+
+        # --- top up a structurally short draft instead of regenerating it ---
+        post = _ensure_sections(post)
         post = _repair(post)
 
         # --- surgical expand: prose only, keeps validated links/meta intact ---

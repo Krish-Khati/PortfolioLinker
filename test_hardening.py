@@ -5,7 +5,12 @@ Run: python test_hardening.py
 
 from __future__ import annotations
 
+import json
+import pathlib
+
+import fetch_image as FI
 import generate_post as G
+import profile as P
 import textnorm as T
 
 FAILS = 0
@@ -295,6 +300,64 @@ try:
     check("length_ok correctly False", out2["length_ok"], False)
 finally:
     G.config.chat = _real_chat
+
+print("\nmeta description length is repaired, not rejected")
+# A GitHub Actions run lost a whole draft to this: the model returned 138
+# chars, fit_meta gave up on anything short, and three regenerations all
+# landed in the same place.
+_lede = ("Search engines read a sitemap to decide which pages to crawl and how "
+         "often to come back. A good sitemap describes your site honestly.")
+_short = ("A practical guide to building sitemaps that search engines can "
+          "actually read, covering what belongs in one and what to skip")
+_ext = G.fit_meta(_short, extra=_lede)
+check("short meta is extended from the post's own words", _ext is not None, True)
+check("extended meta lands in range", 150 <= len(_ext or "") <= 160, True)
+check("extension reads as separate sentences", ". " in (_ext or ""), True)
+check("still gives up when there is no source text",
+      G.fit_meta(_short, extra=""), None)
+check("too-long meta is trimmed",
+      150 <= len(G.fit_meta("x" * 200) or "") <= 160, True)
+
+print("\nshort drafts get sections added, not regenerated")
+_added = {"sections": [{"heading": "C", "paragraphs": ["body c"]}]}
+_real_chat2 = G.config.chat
+G.config.chat = lambda *a, **k: json.dumps(_added)
+try:
+    _two = {"title": "t", "slug": "s", "lede": _lede, "kind": "general",
+            "meta_description": _short, "sections": [
+                {"heading": "A", "paragraphs": ["body a"]},
+                {"heading": "B", "paragraphs": ["body b"]}]}
+    _out = G._ensure_sections(_two)
+    check("one section added", len(_out["sections"]), 3)
+    check("originals preserved first",
+          [s["heading"] for s in _out["sections"]][:2], ["A", "B"])
+
+    _four = {"title": "t", "slug": "s", "lede": _lede,
+             "sections": [{"heading": c, "paragraphs": ["x"]} for c in "ABCD"]}
+    check("a full post is left alone",
+          len(G._ensure_sections(_four)["sections"]), 4)
+finally:
+    G.config.chat = _real_chat2
+
+print("\nanchor examples must survive the validator")
+# _repair_general_links picks from profile.ANCHOR_EXAMPLES programmatically,
+# so a banned example there becomes a rejected draft rather than just bad
+# prompt text. "the projects listed on my site" contained the banned "my site".
+for _tgt, _exs in P.ANCHOR_EXAMPLES.items():
+    for _e in _exs:
+        _k = T.anchor_key(_e)
+        _bad = (_k in G.ANCHOR_EXACT_BANNED
+                or any(p in _k for p in G.ANCHOR_PHRASE_BANNED))
+        check(f"{_tgt}: {_e!r} is not a banned anchor", _bad, False)
+
+print("\npixabay failures degrade instead of killing the run")
+check("search retries on 429", FI.SEARCH_RETRIES > 1, True)
+check("download retries too", FI.DOWNLOAD_RETRIES > 1, True)
+check("calls are throttled", FI.MIN_SECONDS_BETWEEN_CALLS > 0, True)
+_src = __import__("pathlib").Path(FI.__file__).read_text(encoding="utf-8")
+check("search no longer aborts the run on 429",
+      "Pixabay rate limit hit" in _src, False)
+check("it degrades to no image instead", "continuing without an" in _src, True)
 
 print("\n" + "=" * 50)
 print(f"  {PASSES} passed, {FAILS} failed")
