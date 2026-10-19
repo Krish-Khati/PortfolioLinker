@@ -402,6 +402,18 @@
       ],
       "date": "2026-10-19",
       "status": "published"
+    },
+    {
+      "topic": "Structuring Local Business Schema Markup",
+      "kind": "general",
+      "title": "Making local business schema actually make sense",
+      "slug": "making-local-business-schema-actually-make-sense",
+      "blogger_post_id": "3258140944549726462",
+      "url": "https://krishkhati.blogspot.com/2026/10/making-local-business-schema-actually.html",
+      "backlinks": [],
+      "date": "2026-10-19",
+      "status": "published",
+      "note": "backfilled: published by CI before the ledger was shared"
     }
   ]
 }
