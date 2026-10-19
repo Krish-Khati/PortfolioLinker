@@ -414,6 +414,13 @@
       "date": "2026-10-19",
       "status": "published",
       "note": "backfilled: published by CI before the ledger was shared"
+    },
+    {
+      "topic": "LOCAL TEST ENTRY",
+      "title": "local test",
+      "slug": "local-test-entry",
+      "date": "2026-10-19",
+      "status": "draft"
     }
   ]
 }
