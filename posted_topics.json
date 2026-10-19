@@ -341,6 +341,67 @@
       ],
       "date": "2026-10-18",
       "status": "blogger-draft"
+    },
+    {
+      "topic": "How to Structure Semantic HTML for Screen Readers and Search Crawlers",
+      "kind": "general",
+      "title": "Why semantic tags matter for screen readers and search parsers",
+      "slug": "semantic-html-screen-readers-search-crawlers",
+      "meta_description": "Learn why semantic HTML tags like main, section, and article improve accessibility for screen readers and give clear structure to search engine crawlers",
+      "tags": [
+        "html",
+        "accessibility",
+        "seo",
+        "web-development"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the Fitness Temple page",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "where I write up what I learn",
+          "target": "blog",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 2434271,
+        "filename": "semantic-html-screen-readers-search-parsers-2434271.jpg",
+        "width": 1280,
+        "height": 720
+      },
+      "alt_text": "Close-up view of lines of computer code glowing on a dark monitor screen.",
+      "alt_text_source": null,
+      "date": "2026-10-19",
+      "status": "draft",
+      "gate_rounds": 2
+    },
+    {
+      "topic": "How to Structure Semantic HTML for Screen Readers and Search Crawlers",
+      "title": "Why semantic tags matter for screen readers and search parsers",
+      "slug": "semantic-html-screen-readers-search-crawlers",
+      "url": "https://krishkhati.blogspot.com/2026/10/why-semantic-tags-matter-for-screen.html",
+      "blogger_post_id": "9130377112708589886",
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the Fitness Temple page",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "where I write up what I learn",
+          "target": "blog",
+          "placement": "close"
+        }
+      ],
+      "date": "2026-10-19",
+      "status": "published"
     }
   ]
 }
