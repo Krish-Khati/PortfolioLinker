@@ -353,6 +353,46 @@
       "date": "2026-10-19",
       "status": "published",
       "note": "backfilled: published by CI before the ledger was shared"
+    },
+    {
+      "topic": "What a Recruiter Actually Looks at in a Junior Developer Portfolio",
+      "kind": "general",
+      "title": "What a Recruiter Actually Looks at in a Junior Developer Portfolio",
+      "slug": "what-recruiter-looks-at-junior-portfolio",
+      "meta_description": "Discover what hiring managers genuinely look for in a junior developer portfolio, focusing on live links and clear code over decorative design elements",
+      "tags": [
+        "careers",
+        "portfolio",
+        "hiring",
+        "webdev"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the translation tool I built",
+          "target": "project_linguabridge",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "the project list I keep updating",
+          "target": "projects",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 1839500,
+        "filename": "what-recruiter-looks-at-junior-portfolio-1839500.jpg",
+        "width": 1280,
+        "height": 854
+      },
+      "alt_text": "person wearing a blue sweater sitting in front of a computer screen displaying code",
+      "alt_text_source": "vision",
+      "date": "2026-10-19",
+      "status": "published",
+      "gate_rounds": 1,
+      "url": "https://krishkhati.blogspot.com/2026/10/what-recruiter-actually-looks-at-in.html",
+      "blogger_post_id": "8112956306488710347"
     }
   ]
 }
