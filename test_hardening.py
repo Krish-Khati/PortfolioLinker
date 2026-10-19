@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shutil
+from pathlib import Path
 
 import fetch_image as FI
 import generate_post as G
@@ -380,7 +382,67 @@ _src2 = pathlib.Path(G.__file__).read_text(encoding="utf-8")
 check("the stub carries the topic as its title",
       '"title": f"FAILED: {topic[\'topic\']}"' in _src2, True)
 
+print("\nledger keeps one entry per post, not one per event")
+import tempfile
+
+import ledger as L
+
+_tmp = Path(tempfile.mkdtemp())
+_real_ledger_path = L.LEDGER_PATH
+# ledger.py does `from config import LEDGER_PATH`, so the name lives in
+# ledger's namespace. Patching config.LEDGER_PATH writes the REAL ledger.
+L.LEDGER_PATH = _tmp / "posted_topics.json"
+
+_D = {"topic": "How to structure sitemaps", "slug": "structure-sitemaps",
+      "title": "How to structure sitemaps", "image": {"id": 7},
+      "alt_text": "a laptop", "gate_rounds": 2, "status": "draft"}
+_P = {"topic": "How to structure sitemaps", "slug": "structure-sitemaps",
+      "title": "How to structure sitemaps", "blogger_post_id": "999",
+      "url": "https://x/1", "status": "published"}
+
+try:
+    L.record(_D)
+    L.record(_P)
+    _rows = L.all_posts()
+    check("draft + published is one entry", len(_rows), 1)
+    check("blogger id merged in", _rows[0].get("blogger_post_id"), "999")
+    check("image from the first record kept",
+          (_rows[0].get("image") or {}).get("id"), 7)
+    check("alt text kept", _rows[0].get("alt_text"), "a laptop")
+    check("gate_rounds kept", _rows[0].get("gate_rounds"), 2)
+    check("status escalated", _rows[0].get("status"), "published")
+
+    L.record(dict(_D))
+    check("a later draft record does not demote",
+          L.all_posts()[0].get("status"), "published")
+    check("still one entry", len(L.all_posts()), 1)
+
+    L.record({"topic": "A different topic", "slug": "other", "status": "draft"})
+    check("a different post is its own entry", len(L.all_posts()), 2)
+
+    L.record({"topic": "A different topic", "slug": "other", "title": "",
+              "url": None})
+    _o = [x for x in L.all_posts() if x["slug"] == "other"][0]
+    check("empty values do not invent anything", _o.get("url"), None)
+
+    L.LEDGER_PATH.write_text(json.dumps({"posts": [
+        {"topic": "A", "slug": "a", "status": "draft", "image": {"id": 7}},
+        {"topic": "A", "slug": "a", "status": "published", "blogger_post_id": "1"},
+        {"topic": "B", "slug": "b", "status": "draft"},
+    ]}, indent=2), encoding="utf-8")
+    check("dedupe removes the duplicate", L.dedupe(), 1)
+    check("two posts remain", len(L.all_posts()), 2)
+    check("merged row keeps both sides",
+          (L.all_posts()[0].get("image") or {}).get("id"), 7)
+    check("merged row has the blogger id",
+          L.all_posts()[0].get("blogger_post_id"), "1")
+    check("dedupe is idempotent", L.dedupe(), 0)
+finally:
+    L.LEDGER_PATH = _real_ledger_path
+    shutil.rmtree(_tmp, ignore_errors=True)
+
 print("\n" + "=" * 50)
 print(f"  {PASSES} passed, {FAILS} failed")
 print("=" * 50)
 raise SystemExit(1 if FAILS else 0)
+

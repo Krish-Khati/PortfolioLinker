@@ -92,12 +92,91 @@ def anchor_used(anchor: str, lookback: int = 5) -> bool:
     return any(textnorm.anchor_key(a) == target for a in recent_anchors(lookback))
 
 
+# Lifecycle order. A second record for the same post must never demote it
+# back to "draft" just because it was written earlier.
+_STATUS_RANK = {"draft": 0, "blogger-draft": 1, "published": 2}
+
+_EMPTY = (None, "", [], {})
+
+
+def _same_post(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """True if two records describe the same post.
+
+    Slug first: it is exact and both callers pass the same value. Topic is the
+    fallback for older rows written before a slug was set.
+    """
+    sa = (a.get("slug") or "").strip().lower()
+    sb = (b.get("slug") or "").strip().lower()
+    if sa and sb:
+        return sa == sb
+    ta = (a.get("topic") or "").strip().lower()
+    tb = (b.get("topic") or "").strip().lower()
+    return bool(ta) and ta == tb
+
+
+def _merge(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Fold a later record into an earlier one without losing either."""
+    out = dict(old)
+    for k, v in new.items():
+        if k == "date":
+            continue                      # keep when the post was first made
+        if k == "status":
+            if (_STATUS_RANK.get(str(v), 0)
+                    >= _STATUS_RANK.get(str(old.get(k, "draft")), 0)):
+                out[k] = v
+            continue
+        if v in _EMPTY:
+            continue                      # never blank out a real value
+        out[k] = v
+    return out
+
+
 def record(post: dict[str, Any]) -> None:
-    """Append a finished post. Keeps the ledger append-only."""
+    """Record a post. One entry per post, not one per event.
+
+    main.py records a post once it clears the quality gate, and
+    publish_blogger.py records it again after the Blogger post is created.
+    Appending both gave every published post two rows, which double-counted it
+    in recent_anchors() and in the topic-similarity check. A second record for
+    the same post now merges into the first.
+    """
     data = load()
     entry = dict(post)
     entry.setdefault("date", date.today().isoformat())
     entry.setdefault("status", "draft")
-    data["posts"].append(entry)
+
+    posts = data["posts"]
+    for i, existing in enumerate(posts):
+        if _same_post(existing, entry):
+            posts[i] = _merge(existing, entry)
+            save(data)
+            print(f"[ok] updated -> {LEDGER_PATH.name} "
+                  f"({len(posts)} total) [{posts[i].get('status')}]")
+            return
+
+    posts.append(entry)
     save(data)
-    print(f"[ok] recorded -> {LEDGER_PATH.name} ({len(data['posts'])} total)")
+    print(f"[ok] recorded -> {LEDGER_PATH.name} ({len(posts)} total)")
+
+
+def dedupe() -> int:
+    """Collapse duplicate rows left by older versions. Returns rows removed.
+
+    Safe to run repeatedly. Keeps the first occurrence of each post, folded
+    with the rest, so no Blogger id or image metadata is lost.
+    """
+    data = load()
+    posts = data["posts"]
+    out: list[dict[str, Any]] = []
+    for entry in posts:
+        for i, kept in enumerate(out):
+            if _same_post(kept, entry):
+                out[i] = _merge(kept, entry)
+                break
+        else:
+            out.append(dict(entry))
+    removed = len(posts) - len(out)
+    if removed:
+        data["posts"] = out
+        save(data)
+    return removed
