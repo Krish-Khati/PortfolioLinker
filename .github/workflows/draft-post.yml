@@ -36,8 +36,13 @@ concurrency:
   group: draft-post
   cancel-in-progress: false
 
+# contents: write is required so the ledger can be committed back at the end
+# of a run. It is the one privilege this workflow asks for beyond reading the
+# repo, and it is what lets a compromised dependency in requirements.txt push
+# code. Mitigated as far as is reasonable: the commit step stages ONLY
+# posted_topics.json, never `git add -A`.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   draft:
@@ -47,6 +52,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the ledger push below can rebase if your machine
+          # pushed in the meantime. A shallow clone cannot rebase.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -127,6 +136,43 @@ jobs:
           echo "::notice::The draft did not clear the quality gate, so"
           echo "::notice::nothing was published. It is attached to this run"
           echo "::notice::as an artifact for you to look at."
+
+      - name: Commit the ledger back to the repo
+        if: always()
+        # posted_topics.json is the shared memory of what has already been
+        # written. Without this, a scheduled run records its topic on the
+        # runner, that record dies with the runner, and a later local run has
+        # no idea the topic was used - so it picks it again.
+        #
+        # Never let this fail the run: the post is already published by this
+        # point, and a lost ledger update is far less bad than a red run.
+        run: |
+          if git diff --quiet -- posted_topics.json; then
+            echo "ledger unchanged (nothing drafted this run) - nothing to commit"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Stage ONLY the ledger. Never `git add -A` here: drafts/, images/
+          # and .env must never be committed from a runner.
+          git add posted_topics.json
+          git commit -m "ledger: record topics drafted by CI ($(date -u +%Y-%m-%d))"
+
+          # You may have pushed from your machine while this run was going.
+          # Rebase and retry rather than failing on a non-fast-forward.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "ledger pushed to origin/main"
+              exit 0
+            fi
+            echo "push attempt $attempt failed; rebasing onto origin/main"
+            git pull --rebase origin main || true
+          done
+
+          echo "::warning::could not push the ledger. Your local posted_topics.json"
+          echo "::warning::may not know about topics this run already used."
 
       - name: Upload drafts and images as an artifact
         if: always()
