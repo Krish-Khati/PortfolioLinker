@@ -441,6 +441,41 @@ finally:
     L.LEDGER_PATH = _real_ledger_path
     shutil.rmtree(_tmp, ignore_errors=True)
 
+print("\na failed draft is still saved, not crashed on")
+import main as M
+
+_BAD = {"topic": "T", "title": "Broken draft", "slug": "broken-draft",
+        "lede": "x", "sections": [{"heading": "H", "paragraphs": ["p"]}],
+        "backlinks": [{"id": "LINK1", "anchor": "a b", "target": "***",
+                       "placement": "body"}],
+        "tags": ["a"], "meta_description": "m" * 155,
+        "image_query": "q", "alt_text": "a",
+        "errors": ["illegal link target '***'"]}
+
+# render must keep refusing: anything unverified must never reach Blogger.
+_refused = False
+try:
+    import render as _R
+    _R.to_html_with_local_image(_BAD, "", None)
+except ValueError:
+    _refused = True
+check_true("renderer still refuses an unverified target", _refused)
+
+# ...but saving a failed draft must not raise, or the run produces nothing.
+_body = M._render_body(_BAD, None)
+check_true("_render_body returned instead of raising", isinstance(_body, str))
+check_true("and it is not empty", len(_body) > 0)
+
+_safe = M._strip_bad_links(_BAD)
+check("unverified link dropped", len(_safe["backlinks"]), 0)
+check("original post left untouched", len(_BAD["backlinks"]), 1)
+
+_good = dict(_BAD)
+_good["backlinks"] = [{"id": "LINK1", "anchor": "a b", "target": "home",
+                       "placement": "body"}]
+check_true("a valid post still renders normally",
+           len(M._render_body(_good, None)) > 0)
+
 print("\n" + "=" * 50)
 print(f"  {PASSES} passed, {FAILS} failed")
 print("=" * 50)

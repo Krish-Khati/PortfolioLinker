@@ -222,6 +222,56 @@ def run(topic: str | None = None, image_query: str = "") -> dict[str, Any]:
             "passed": passed, "history": history}
 
 
+def _strip_bad_links(post: dict[str, Any]) -> dict[str, Any]:
+    """Drop backlinks whose target is not in the verified table.
+
+    render.resolve_links() raises on an unverified target, which is correct for
+    anything heading to Blogger. A draft that failed validation has no business
+    reaching Blogger at all, but it still needs to be readable on disk.
+    """
+    import copy
+
+    import profile as P
+
+    safe = copy.deepcopy(post)
+    kept = [l for l in (safe.get("backlinks") or [])
+            if l.get("target") in P.LINK_TARGETS]
+    if len(kept) != len(safe.get("backlinks") or []):
+        print(f"[save] dropped {len(safe.get('backlinks') or []) - len(kept)} "
+              "unverified link(s) so the draft could still be written")
+    safe["backlinks"] = kept
+    return safe
+
+
+def _render_body(post: dict[str, Any],
+                 image: dict[str, Any] | None) -> str:
+    """Render a draft for disk, degrading rather than raising.
+
+    A generation that fails validation is usually bad in some way, and one of
+    those ways used to take the whole run down: main.py saves the failed draft
+    for review, render.resolve_links() refuses the unverified target it
+    contains, and the exception propagated, so the run produced no draft and
+    no artifact at all. Observed on a GitHub run where the model returned the
+    placeholder target '***'.
+    """
+    import html as _html
+
+    fname = image["filename"] if image else ""
+    try:
+        return render.to_html_with_local_image(post, fname, image)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] could not render this draft "
+              f"({exc.__class__.__name__}: {exc})")
+        try:
+            return render.to_html_with_local_image(_strip_bad_links(post),
+                                                   fname, image)
+        except Exception as exc2:  # noqa: BLE001
+            print(f"[warn] still unrenderable ({exc2.__class__.__name__}); "
+                  "writing the raw draft instead")
+            return (f"<h1>{_html.escape(post.get('title', 'untitled'))}</h1>"
+                    f"<pre>{_html.escape(json.dumps(post, indent=2, ensure_ascii=False))}</pre>")
+
+
 def _save_draft(post: dict[str, Any], image: dict[str, Any] | None,
                 status: str, gate_text: str) -> Path:
     config.DRAFTS_DIR.mkdir(exist_ok=True)
@@ -229,8 +279,7 @@ def _save_draft(post: dict[str, Any], image: dict[str, Any] | None,
     slug = post.get("slug") or "untitled"
     stem = f"{stamp}-{slug}"
 
-    body = render.to_html_with_local_image(
-        post, image["filename"] if image else "", image)
+    body = _render_body(post, image)
     (config.DRAFTS_DIR / f"{stem}.body.html").write_text(
         f'<meta name="description" content="{post.get("meta_description", "")}">\n'
         f'<meta name="keywords" content="{", ".join(post.get("tags", []))}">\n'
