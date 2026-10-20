@@ -181,7 +181,26 @@ Always set "urls_all_approved" to true unless a href is genuinely unrecognised.
 
 def _parse(raw: str) -> dict[str, Any]:
     cleaned = raw.replace("```json", "").replace("```", "").strip()
-    return json.loads(cleaned[cleaned.find("{"): cleaned.rfind("}") + 1])
+    # strict=False lets a raw newline sit inside a string value, which is
+    # legal for some model dialects and not worth failing a good draft over.
+    return json.loads(cleaned[cleaned.find("{"): cleaned.rfind("}") + 1],
+                      strict=False)
+
+
+def _verdict_ok(raw: str) -> bool:
+    """True when the gate's reply is a JSON object that carries scores.
+
+    This is the same test the gate uses to read the reply, so the provider
+    chain only ever rejects a reply the gate would have rejected anyway. A
+    reply with no scores scores a zero-by-default 10 across the board, which
+    fails the draft on technicalities - asking another provider for a proper
+    verdict is strictly better than failing a good post.
+    """
+    try:
+        data = _parse(raw)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("scores"), dict)
 
 
 def review(post: dict[str, Any], image: dict[str, Any] | None) -> dict[str, Any]:
@@ -195,7 +214,8 @@ def review(post: dict[str, Any], image: dict[str, Any] | None) -> dict[str, Any]
     away. There is no creativity to buy here, only a repeatable verdict.
     """
     raw = config.chat(_build_prompt(post, image), SYSTEM,
-                      temperature=0.1, max_tokens=2600, as_json=True)
+                      temperature=0.1, max_tokens=2600, as_json=True,
+                      validate=_verdict_ok)
     try:
         data = _parse(raw)
     except (json.JSONDecodeError, ValueError):

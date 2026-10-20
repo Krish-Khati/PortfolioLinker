@@ -189,6 +189,22 @@ def _validate(t: dict[str, Any]) -> str | None:
     return None
 
 
+def _json_ok(raw: str) -> bool:
+    """True when the reply is parseable JSON.
+
+    A bare array is fine here - the picker accepts both shapes - so this only
+    checks that there is JSON to parse. It exists so the provider chain moves
+    on to the next model or provider when a reply is unparseable, instead of
+    burning the round on a topic that was never picked.
+    """
+    cleaned = (raw or "").replace("```json", "").replace("```", "").strip()
+    try:
+        json.loads(cleaned, strict=False)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return True
+
+
 def pick_topics(n: int = 3, max_rounds: int = 3) -> list[dict[str, Any]]:
     """Generate, validate and filter topics. Retries on collisions."""
     accepted: list[dict[str, Any]] = []
@@ -206,6 +222,7 @@ def pick_topics(n: int = 3, max_rounds: int = 3) -> list[dict[str, Any]]:
             temperature=0.9 if round_no == 1 else 1.0,
             max_tokens=2000,
             as_json=True,
+            validate=_json_ok,
         )
 
         try:

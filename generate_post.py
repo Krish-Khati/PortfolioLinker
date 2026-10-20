@@ -20,10 +20,12 @@ import argparse
 import json
 import random
 import re
+import time
 from typing import Any
 
 import config
 import ledger
+import providers
 import textnorm
 import profile as P
 
@@ -920,8 +922,8 @@ Return exactly:
 {{"sections": [{{"heading": "...", "paragraphs": ["...", "..."]}}]}}"""
 
     try:
-        raw = config.chat(prompt, ADD_SECTIONS_SYSTEM, temperature=0.85,
-                          max_tokens=2000, as_json=True)
+        raw = _ask_for_json(prompt, ADD_SECTIONS_SYSTEM, temperature=0.85,
+                            max_tokens=2000)
         data = _parse(raw) or {}
     except config.DailyTokenLimitError:
         raise
@@ -1107,8 +1109,8 @@ PROSE:
 Return the full JSON object with "lede" and "sections" rewritten longer."""
 
     try:
-        raw = config.chat(prompt, EXPAND_SYSTEM, temperature=0.75,
-                          max_tokens=MAX_EXPAND_TOKENS, as_json=True)
+        raw = _ask_for_json(prompt, EXPAND_SYSTEM, temperature=0.75,
+                            max_tokens=MAX_EXPAND_TOKENS)
     except config.DailyTokenLimitError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1224,15 +1226,117 @@ def _looks_truncated(raw: str | None) -> bool:
     return opens > closes
 
 
+def _drop_trailing_commas(text: str) -> str:
+    """Remove commas that sit immediately before a closing brace or bracket.
+
+    Written as a scanner rather than a regex so that a comma inside a string
+    value ("notes": ["a, b"],) is left exactly as the model wrote it.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    i = 0
+
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < len(text) and text[j].isspace():
+                j += 1
+            if j < len(text) and text[j] in "}]":
+                i += 1          # drop the comma, keep the whitespace
+                continue
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
 def _parse(raw: str) -> dict[str, Any] | None:
-    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    """Parse a model reply into a dict, repairing the common malformations.
+
+    Models return malformed JSON in a few repeatable ways, and every one of
+    them used to throw away a whole round of generation:
+
+      - a trailing comma before } or ]
+      - a literal newline or tab inside a string value
+
+    Both repairs only make the document more correct; neither changes what
+    the model said. Anything more aggressive (guessing where a truncated
+    object was meant to end) risks inventing content, so it is not tried
+    here - a truncated reply is handled as a truncated reply.
+    """
+    cleaned = (raw or "").replace("```json", "").replace("```", "").strip()
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start == -1 or end == -1:
         return None
-    try:
-        return json.loads(cleaned[start:end + 1])
-    except json.JSONDecodeError:
-        return None
+    body = cleaned[start:end + 1]
+
+    # strict=False allows a raw newline or tab to sit inside a string value,
+    # which is legal JSON for some model dialects and is not worth a round.
+    for candidate in (body, _drop_trailing_commas(body)):
+        try:
+            data = json.loads(candidate, strict=False)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _json_object_ok(raw: str) -> bool:
+    """True when the reply is a JSON object we can actually work with.
+
+    Used as the provider chain's acceptance test: a model that answers with
+    broken JSON is not a success, and the chain moves on to the next model
+    instead of handing the broken reply back to be parsed a second time.
+    """
+    return _parse(raw) is not None
+
+
+# A chain-wide "every provider answered with unusable output" is a glitch,
+# not a rejected draft. Retrying it inside the same attempt means a busy
+# provider, or a model that briefly lost its JSON framing, does not spend the
+# round. This is the layer above the provider chain, which already falls
+# through to the next model and the next provider on its own.
+GLITCH_RETRIES = 2
+GLITCH_BACKOFF = 5
+
+
+def _ask_for_json(prompt: str, system: str, *, temperature: float,
+                  max_tokens: int) -> str:
+    """One JSON generation call, with a glitch retry that keeps the round."""
+    last: Exception | None = None
+    for attempt in range(1, GLITCH_RETRIES + 1):
+        try:
+            return config.chat(prompt, system, temperature=temperature,
+                               max_tokens=max_tokens, as_json=True,
+                               validate=_json_object_ok)
+        except providers.NoUsableOutput as exc:
+            last = exc
+            if attempt >= GLITCH_RETRIES:
+                break
+            print(f"[warn] no provider returned usable JSON "
+                  f"(try {attempt}/{GLITCH_RETRIES}); waiting "
+                  f"{GLITCH_BACKOFF}s and asking again")
+            time.sleep(GLITCH_BACKOFF)
+    raise last or providers.NoUsableOutput(
+        "no provider returned usable JSON")
 
 
 # ------------------------------------------------------------------- public
@@ -1264,10 +1368,18 @@ def generate_post(topic: dict[str, Any], max_attempts: int = 3,
         if attempt > 1:
             print(f"[retry {attempt}] asking for a fresh draft…")
         try:
-            raw = config.chat(prompt, SYSTEM, temperature=0.9,
-                              max_tokens=MAX_GEN_TOKENS, as_json=True)
+            raw = _ask_for_json(prompt, SYSTEM, temperature=0.9,
+                                max_tokens=MAX_GEN_TOKENS)
         except config.DailyTokenLimitError:
             raise          # org-wide quota: retrying is pointless, let it bubble
+        except providers.NoUsableOutput:
+            # Every provider answered with unusable JSON, twice over. Nothing
+            # was written, so the round was spent on a glitch rather than on
+            # the draft. Say so plainly instead of blaming the topic.
+            print("\n[!] no provider returned usable JSON")
+            errors = ["model returned unparseable JSON"]
+            post = {"topic": topic["topic"], "errors": errors}
+            return post
         except Exception as exc:  # noqa: BLE001 - all models failed
             print(f"[warn] generation call failed: {exc}")
             errors = [f"model unavailable: {exc.__class__.__name__}"]
@@ -1308,8 +1420,8 @@ def generate_post(topic: dict[str, Any], max_attempts: int = 3,
                 "\"paragraphs\" (array of strings). Do not use \"body\"."
             )
             try:
-                raw2 = config.chat(retry_prompt, SYSTEM, temperature=0.9,
-                                   max_tokens=MAX_GEN_TOKENS, as_json=True)
+                raw2 = _ask_for_json(retry_prompt, SYSTEM, temperature=0.9,
+                                     max_tokens=MAX_GEN_TOKENS)
             except config.DailyTokenLimitError:
                 raise
             except Exception:  # noqa: BLE001

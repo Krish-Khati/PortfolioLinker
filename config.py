@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Callable
 
 from dotenv import load_dotenv
 
@@ -172,22 +173,29 @@ def _strip_reasoning(text: str) -> str:
 
 def chat(prompt: str, system: str, *, temperature: float = 0.85,
          max_tokens: int = 3200, as_json: bool = False,
-         allowed: list[str] | None = None) -> str:
+         allowed: list[str] | None = None,
+         validate: Callable[[str], bool] | None = None) -> str:
     """Text generation across the configured provider chain.
 
     Order comes from LLM_PROVIDERS in .env (default gemini -> groq -> ollama).
     A provider that is exhausted, misconfigured or offline is skipped and the
     next one is tried; only an all-providers failure raises.
+
+    `validate` is an optional predicate on the raw reply. When it is given, a
+    provider whose reply fails it is skipped like a dead provider, so a
+    malformed answer does not end the chain with garbage in hand.
     """
     import providers  # local import: providers imports config
 
     return providers.chain(prompt, system, vision=False, temperature=temperature,
-                           max_tokens=max_tokens, as_json=as_json, allowed=allowed)
+                           max_tokens=max_tokens, as_json=as_json,
+                           allowed=allowed, validate=validate)
 
 
 def chat_vision(prompt: str, image_paths: list[str | Path], system: str, *,
                 temperature: float = 0.3, max_tokens: int = 600,
-                as_json: bool = False) -> str:
+                as_json: bool = False,
+                validate: Callable[[str], bool] | None = None) -> str:
     """Vision generation. Only providers with a multimodal model are tried.
 
     Groq vision is pinned to qwen3.8-27b; Gemini flash models are natively
@@ -199,7 +207,7 @@ def chat_vision(prompt: str, image_paths: list[str | Path], system: str, *,
     return providers.chain(prompt, system, vision=True,
                            image_paths=[str(p) for p in image_paths],
                            temperature=temperature, max_tokens=max_tokens,
-                           as_json=as_json)
+                           as_json=as_json, validate=validate)
 
 
 def usage_report() -> str:

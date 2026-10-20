@@ -22,7 +22,7 @@ import json
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import config
 
@@ -38,11 +38,65 @@ VISION_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 class ProviderError(RuntimeError):
-    """A provider failed. `fatal` means do not retry this provider at all."""
+    """A provider failed.
 
-    def __init__(self, message: str, *, fatal: bool = False):
+    Three failures need three different responses, so they are told apart:
+
+    fatal     - this provider is done (no key, auth rejected, quota gone).
+                Do not call it again; move to the next provider.
+    transient - this looks temporary (503 "high demand", a timeout). Wait a
+                little and try the SAME model again.
+    unusable  - the provider answered, but the answer was not usable (most
+                often malformed JSON). Another model may answer better, so
+                keep walking down the list instead of handing it back.
+    """
+
+    def __init__(self, message: str, *, fatal: bool = False,
+                 transient: bool = False, unusable: bool = False):
         super().__init__(message)
         self.fatal = fatal
+        self.transient = transient
+        self.unusable = unusable
+
+
+class NoUsableOutput(RuntimeError):
+    """Every provider answered and no answer was usable.
+
+    This is deliberately NOT the same as "every provider died". The providers
+    are alive - they just all replied with something unusable. The right
+    response is to wait a moment and ask again, so it gets its own type and
+    the caller can retry the chain instead of writing the topic off.
+    """
+
+
+# How hard one model is tried before the next model in the list is tried.
+#
+# A 503 from a free-tier model is a queue, not a rejection. Gemini's own body
+# says so: "This model is currently experiencing high demand. Spikes in demand
+# are usually temporary. Please try again later." The old code gave that ONE
+# three-second retry and then abandoned the provider, so a topic could be
+# lost to a busy minute.
+TRANSIENT_RETRIES = 2
+TRANSIENT_BACKOFF = (4, 10)
+
+# Markers for failures that look temporary when the adapter could not say so
+# itself (a generic exception, a wrapped error).
+TRANSIENT_MARKERS = (
+    "503", "502", "504", "500", "high demand", "overloaded", "temporarily",
+    "timeout", "timed out", "connection reset", "connection aborted",
+    "connection refused", "unavailable",
+)
+
+
+def is_transient(exc: Exception) -> bool:
+    """True when the failure looks like a hiccup rather than a rejection."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in TRANSIENT_MARKERS)
+
+
+def _backoff(attempt: int) -> int:
+    """Seconds to wait before the attempt-th retry of one model."""
+    return TRANSIENT_BACKOFF[min(attempt - 1, len(TRANSIENT_BACKOFF) - 1)]
 
 
 # ------------------------------------------------------------------- helpers
@@ -133,14 +187,18 @@ def gemini_generate(prompt: str, system: str, model: str, *, temperature: float,
             params={"key": key}, json=body, timeout=180,
         )
     except Exception as exc:  # noqa: BLE001
-        raise ProviderError(f"gemini network error: {exc}") from exc
+        raise ProviderError(f"gemini network error: {exc}",
+                            transient=True) from exc
 
     if resp.status_code == 429:
         raise ProviderError(f"gemini quota: {resp.text[:180]}", fatal=True)
     if resp.status_code in (401, 403):
         raise ProviderError(f"gemini auth failed: {resp.text[:180]}", fatal=True)
     if resp.status_code != 200:
-        raise ProviderError(f"gemini {resp.status_code}: {resp.text[:180]}")
+        # 5xx is Gemini saying "busy, try again". It is not a rejection of
+        # the request and not a reason to give the topic up.
+        raise ProviderError(f"gemini {resp.status_code}: {resp.text[:180]}",
+                            transient=resp.status_code in (500, 502, 503, 504))
 
     data = resp.json()
     # blocked candidates come back 200 with no usable parts
@@ -202,17 +260,21 @@ def groq_generate(prompt: str, system: str, model: str, *, temperature: float,
         resp = requests.post(GROQ_API, json=payload, timeout=180,
                              headers={"Authorization": f"Bearer {key}"})
     except Exception as exc:  # noqa: BLE001
-        raise ProviderError(f"groq network error: {exc}") from exc
+        raise ProviderError(f"groq network error: {exc}",
+                            transient=True) from exc
 
     if resp.status_code in (401, 403):
         raise ProviderError(f"groq auth failed: {resp.text[:180]}", fatal=True)
     if resp.status_code == 429:
         msg = resp.text
         daily = "tokens per day" in msg.lower() or "tpd" in msg.lower()
+        # A daily quota is gone until midnight and retrying is pointless. A
+        # plain rate limit is a queue: wait and try the same model again.
         raise ProviderError(f"groq {'daily quota' if daily else 'rate limit'}: "
-                            f"{msg[:160]}", fatal=daily)
+                            f"{msg[:160]}", fatal=daily, transient=not daily)
     if resp.status_code != 200:
-        raise ProviderError(f"groq {resp.status_code}: {resp.text[:180]}")
+        raise ProviderError(f"groq {resp.status_code}: {resp.text[:180]}",
+                            transient=resp.status_code in (500, 502, 503, 504))
 
     data = resp.json()
     u = data.get("usage") or {}
@@ -319,8 +381,25 @@ def models_for(provider: str, vision: bool = False) -> list[str]:
 def generate(provider: str, prompt: str, system: str, *, vision: bool = False,
              image_paths: list[str] | None = None,
              temperature: float = 0.85, max_tokens: int = 3200,
-             as_json: bool = False) -> str:
-    """Call one provider through its model list, with one retry on throttle."""
+             as_json: bool = False,
+             validate: Callable[[str], bool] | None = None) -> str:
+    """Call one provider through its model list, with one retry on throttle.
+
+    Every model in the list gets its own retry budget, and a model that
+    answers badly does not end the chain: the next model is tried, and if the
+    whole provider is exhausted the caller moves to the next provider.
+
+    The old version raised out of the model loop on the first non-fatal
+    failure, so GEMINI_MODELS' second and third entries were never used at
+    all, and the single retry it did allow was spent on the first model. A
+    503 on gemini-3.5-flash-lite therefore took down the whole provider
+    even though two more Gemini models were sitting right there in the list.
+
+    `validate` is an optional predicate on the raw reply. When it is given, a
+    provider whose answer fails it is treated as a failure, so a reply of
+    malformed JSON moves on to the next model instead of being returned as if
+    it were a success.
+    """
     table = VISION_ADAPTERS if vision else TEXT_ADAPTERS
     if provider not in table:
         raise ProviderError(f"unknown provider {provider!r}", fatal=True)
@@ -334,52 +413,100 @@ def generate(provider: str, prompt: str, system: str, *, vision: bool = False,
         raise ProviderError(f"no model configured for {provider}", fatal=True)
 
     last: Exception | None = None
-    throttle_retries = 0
+    unusable_count = 0
+    dead_count = 0
+
     for model in models:
+        attempt = 0
         while True:
             try:
-                return fn(prompt, system, model, temperature=temperature,
-                          max_tokens=max_tokens, as_json=as_json,
-                          images=image_paths)
+                out = fn(prompt, system, model, temperature=temperature,
+                         max_tokens=max_tokens, as_json=as_json,
+                         images=image_paths)
             except ProviderError as exc:
                 last = exc
                 if exc.fatal:
                     raise
-                throttle_retries += 1
-                if throttle_retries <= 1:
-                    print(f"[warn] {provider}/{model} throttled; retrying once")
-                    time.sleep(3)
+                attempt += 1
+                if exc.transient and attempt <= TRANSIENT_RETRIES:
+                    delay = _backoff(attempt)
+                    print(f"[warn] {provider}/{model} transient failure "
+                          f"({exc}); retrying in {delay}s")
+                    time.sleep(delay)
                     continue
-                raise ProviderError(f"{provider}/{model} failed: {exc}") from exc
+                dead_count += 1
+                print(f"[warn] {provider}/{model} failed: {exc}")
+                break
             except Exception as exc:  # noqa: BLE001
-                raise ProviderError(f"{provider}/{model} error: {exc}") from exc
-    raise ProviderError(f"{provider}: all models failed: {last}")
+                last = ProviderError(f"{provider}/{model} error: {exc}")
+                attempt += 1
+                if is_transient(exc) and attempt <= TRANSIENT_RETRIES:
+                    delay = _backoff(attempt)
+                    print(f"[warn] {provider}/{model} transient failure "
+                          f"({exc}); retrying in {delay}s")
+                    time.sleep(delay)
+                    continue
+                dead_count += 1
+                print(f"[warn] {provider}/{model} failed: {last}")
+                break
+
+            # The provider answered. Hold it to the caller's standard: a model
+            # that replies with malformed JSON is not a success, and returning
+            # it ends the chain before the next model or provider ever gets
+            # a turn.
+            if validate is not None and not validate(out):
+                last = ProviderError(
+                    f"{provider}/{model} returned unusable output",
+                    unusable=True)
+                unusable_count += 1
+                print(f"[warn] {provider}/{model} returned unusable output; "
+                      "trying the next model")
+                break
+
+            return out
+
+    raise ProviderError(f"{provider}: all models failed: {last}",
+                        unusable=(dead_count == 0 and unusable_count > 0))
 
 
 def chain(prompt: str, system: str, *, vision: bool = False,
           image_paths: list[str] | None = None, temperature: float = 0.85,
           max_tokens: int = 3200, as_json: bool = False,
-          allowed: list[str] | None = None) -> str:
-    """Try each provider in order. Returns the first success.
+          allowed: list[str] | None = None,
+          validate: Callable[[str], bool] | None = None) -> str:
+    """Try each provider in order. Returns the first usable success.
+
+    `validate` is an optional predicate on the raw reply, passed down to
+    every provider. A provider whose answer fails it is skipped exactly like
+    a dead provider, so one bad reply no longer ends the chain with garbage.
 
     Raises DailyTokenLimitError only when every provider is unavailable, so a
-    single exhausted quota no longer kills the run.
+    single exhausted quota no longer kills the run, and NoUsableOutput when
+    every provider answered but no answer was usable.
     """
     order = [p for p in provider_order() if (allowed is None or p in allowed)]
     errors: list[str] = []
+    all_unusable = True
 
     for provider in order:
         try:
             return generate(provider, prompt, system, vision=vision,
                             image_paths=image_paths, temperature=temperature,
-                            max_tokens=max_tokens, as_json=as_json)
+                            max_tokens=max_tokens, as_json=as_json,
+                            validate=validate)
         except ProviderError as exc:
             errors.append(f"{provider}: {exc}")
             print(f"[warn] skipping {provider}: {exc}")
+            if not exc.unusable:
+                all_unusable = False
             continue
 
     if any("daily quota" in e for e in errors) or any("quota" in e for e in errors):
         raise config.DailyTokenLimitError(
             "Every configured LLM provider is exhausted or unavailable:\n  "
+            + "\n  ".join(errors))
+    if all_unusable and errors:
+        raise NoUsableOutput(
+            "Every provider answered, but no answer was usable:\n  "
             + "\n  ".join(errors))
     raise RuntimeError("All LLM providers failed:\n  " + "\n  ".join(errors))
