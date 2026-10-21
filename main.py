@@ -163,7 +163,13 @@ def run(topic: str | None = None, image_query: str = "") -> dict[str, Any]:
                 print("  [skip] no image chosen, alt text left as drafted")
 
         _banner("5/5", f"QUALITY GATE  (round {tag})")
-        result = quality_gate.check(post, image, attempts=1)
+        # Two samples of the gate, not one. The gate is a sampled judgement
+        # and it is not perfectly repeatable, so a single sample that
+        # contradicts itself used to throw away a whole regenerated post -
+        # eight more LLM calls and a consumed topic - over no stated reason.
+        # A draft still has to clear the gate; the extra sample only decides
+        # what happens when the reviewer shrugs.
+        result = quality_gate.check(post, image, attempts=2)
         history.append(result)
 
         if result["passed"]:

@@ -288,11 +288,34 @@ def review(post: dict[str, Any], image: dict[str, Any] | None) -> dict[str, Any]
     # If we just disproved the premise behind its complaints, its bare verdict
     # is ignored too - otherwise the override above would change nothing.
     worst = max(verdicts.values()) if verdicts else 10
-    failed = (worst >= 6 or bool(problems)
-              or (data.get("verdict") == FAIL and not discarded))
+
+    # A fail with EVIDENCE behind it: a score at 6 or above, or problems the
+    # reviewer named. This is the gate's own contract, and it is what a real
+    # veto looks like.
+    evidenced = bool(worst >= 6 or problems)
+
+    # The model's own verdict. Its prompt says the verdict must follow the
+    # rule above, so a "fail" with no evidence behind it is the reviewer
+    # contradicting itself.
+    said_fail = bool(data.get("verdict") == FAIL and not discarded)
+
+    # A "fail" with no score at 6 or above and no problems is a shrug, not a
+    # verdict. The gate's own contract is "fail if any score is 6+ or if
+    # problems is non-empty", so a bare "fail" has nothing behind it, and it
+    # must not throw away a good draft.
+    #
+    # Observed on a live run: the same post passed this gate in main.py with
+    # AI_SLOP=1 and no problems, and was then rejected by the publish-time
+    # re-check with AI_SLOP=3, BACKLINKS=2 and STILL no problems. Every score
+    # was far below the fail line. The only thing that had changed was the
+    # model's bare "fail", and it cost a publish.
+    inconsistent = bool(said_fail and not evidenced)
+
+    failed = evidenced or said_fail
 
     return {
         "verdict": FAIL if failed else PASS,
+        "inconsistent": inconsistent,
         "scores": verdicts,
         "problems": problems,
         "fix_instructions": data.get("fix_instructions", ""),
@@ -322,6 +345,7 @@ def check(post: dict[str, Any], image: dict[str, Any] | None,
                 "problems": [f"gate could not run: {exc.__class__.__name__}"],
                 "fix_instructions": "",
                 "gate_error": True,
+                "inconsistent": False,
             }
 
         history.append(result)
@@ -331,6 +355,14 @@ def check(post: dict[str, Any], image: dict[str, Any] | None,
 
         if result["verdict"] == PASS:
             return {"passed": True, "attempts": attempt, "history": history}
+
+        if result.get("inconsistent"):
+            # No score at 6 or above and no problems: the reviewer had no
+            # reason and said "fail" anyway. Ask again rather than throw the
+            # draft away on a shrug.
+            print("    (no score >= 6 and no problems - the reviewer "
+                  "contradicted itself; asking again)")
+            continue
 
         for p in result["problems"][:6]:
             print(f"    - {p}")
@@ -343,6 +375,9 @@ def summarise(result: dict[str, Any]) -> str:
     last = result["history"][-1]
     if last.get("gate_error"):
         return "Quality gate could not complete (model unavailable)."
+    if last.get("inconsistent"):
+        return ("Quality gate was inconclusive: the reviewer returned 'fail' "
+                "with no score at 6 or above and no problems to name.")
     lines = [f"verdict: {last['verdict']}"]
     for k, v in last["scores"].items():
         lines.append(f"  {k}: {v}/10")

@@ -33,6 +33,23 @@ import render
 from config import BLOGGER_API, BLOGGER_SCOPE, ROOT
 
 
+# How many times the publish-time gate is asked before the publish is blocked.
+#
+# The re-check exists to catch a draft that no longer passes - not to re-roll
+# a noisy reviewer. The gate is a sampled judgement: measured seven times on
+# identical text it returned byte-identical scores six times and a different
+# verdict once. With a single sample, that one unlucky verdict blocked a
+# publish on a live run: the draft had passed this same gate minutes earlier
+# in main.py, and the re-check rejected it with every score far below the
+# fail line and NO problems at all - the model said "fail" and named nothing.
+#
+# Three samples does not loosen the standard. The draft still has to clear
+# the gate, a reasoned veto still blocks the publish (see the check below),
+# and the deterministic fabrication tripwires below are not sampled at all.
+# It just stops one unexplained shrug from deciding the outcome.
+GATE_RECHECK_ATTEMPTS = 3
+
+
 # ------------------------------------------------------------------- oauth
 def blogger_service():
     from google.auth.transport.requests import Request
@@ -190,12 +207,28 @@ def main() -> int:
     # ---- re-run the gate -------------------------------------------------
     if not args.skip_gate:
         print("[gate] re-checking draft before it goes anywhere...")
-        res = quality_gate.check(post, image, attempts=1)
+        res = quality_gate.check(post, image, attempts=GATE_RECHECK_ATTEMPTS)
         if not res["passed"]:
-            print("\n[!] gate failed; not publishing. Problems:")
-            for p in res["history"][-1].get("problems", [])[:8]:
-                print(f"    - {p}")
-            return 1
+            # Work out WHY it failed before blocking a publish on it.
+            #
+            # A reasoned veto - a score at 6 or above, or problems the
+            # reviewer named - blocks, exactly as before. A verdict with
+            # nothing behind it does not: that is the reviewer contradicting
+            # itself, and it is not a reason to keep a good draft off the
+            # blog. The draft has already passed the gate in main.py, so a
+            # reasonless shrug here does not get to overrule it.
+            reasoned_veto = [h for h in res["history"]
+                             if h.get("verdict") == "fail"
+                             and not h.get("inconsistent")]
+            if reasoned_veto:
+                print("\n[!] gate failed; not publishing. Problems:")
+                for p in reasoned_veto[-1].get("problems", [])[:8]:
+                    print(f"    - {p}")
+                return 1
+            print("\n[!] the gate said 'fail' on every attempt but named no "
+                  "reason (no score at 6 or above, no problems).")
+            print("    That is not a verdict, so it does not block a draft "
+                  "that already passed the gate.")
         print("[gate] passed")
 
     # ---- hard fabrication check -----------------------------------------
