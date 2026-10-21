@@ -393,6 +393,44 @@
       "gate_rounds": 1,
       "url": "https://krishkhati.blogspot.com/2026/10/what-recruiter-actually-looks-at-in.html",
       "blogger_post_id": "8112956306488710347"
+    },
+    {
+      "topic": "How to Structure the Core Layout of a Landing Page",
+      "kind": "general",
+      "title": "Structuring a Landing Page so People Actually Stay",
+      "slug": "structuring-landing-page-core-layout",
+      "meta_description": "Learn how to structure a high-converting landing page layout using clean hero sections, clear visual hierarchy, and balanced whitespace to keep bounce rates low",
+      "tags": [
+        "web-development",
+        "ui-design",
+        "frontend",
+        "layout"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "how I laid out the programs section",
+          "target": "project_fitness_temple",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "the site I maintain",
+          "target": "home",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 788002,
+        "filename": "structuring-landing-page-core-layout-788002.jpg",
+        "width": 1280,
+        "height": 850
+      },
+      "alt_text": "hands working on design sketches with markers, a smartphone, and a computer monitor on a wooden desk",
+      "alt_text_source": "vision",
+      "date": "2026-10-21",
+      "status": "draft",
+      "gate_rounds": 1
     }
   ]
 }
