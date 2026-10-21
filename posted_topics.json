@@ -435,6 +435,46 @@
       "date": "2026-10-21",
       "status": "draft",
       "gate_rounds": 1
+    },
+    {
+      "topic": "How to Structure Error Messages That Actually Tell You What Broke",
+      "kind": "general",
+      "title": "Why vague error messages waste hours of your day",
+      "slug": "why-vague-error-messages-waste-hours-of-your-day",
+      "meta_description": "Learn why vague error messages slow down debugging and how to write descriptive exceptions that point directly to the failing logic in your script. worst",
+      "tags": [
+        "debugging",
+        "python",
+        "coding",
+        "errors"
+      ],
+      "backlinks": [
+        {
+          "id": "LINK1",
+          "anchor": "the calculator project I built",
+          "target": "project_calculator",
+          "placement": "body"
+        },
+        {
+          "id": "LINK2",
+          "anchor": "my longer notes on building software",
+          "target": "blog",
+          "placement": "close"
+        }
+      ],
+      "image": {
+        "id": 1839406,
+        "filename": "why-vague-error-messages-waste-hours-of-your-day-1839406.jpg",
+        "width": 1280,
+        "height": 854
+      },
+      "alt_text": "lines of colorful computer code displayed on a dark monitor screen",
+      "alt_text_source": "vision",
+      "date": "2026-10-21",
+      "status": "published",
+      "gate_rounds": 1,
+      "url": "https://krishkhati.blogspot.com/2026/10/why-vague-error-messages-waste-hours-of.html",
+      "blogger_post_id": "245616234253343054"
     }
   ]
 }
