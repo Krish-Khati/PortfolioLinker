@@ -17,12 +17,10 @@ name: draft-post
 
 on:
   schedule:
-    # Mon, Wed and Fri, 09:00 UTC. GitHub cron is UTC-only, runs on best effort
-    # (expect drift, and occasional skipped runs), and queues every repo's
-    # scheduled jobs into the same minute - hence :17 rather than :00.
-    - cron: "17 9 * * 1"
-    - cron: "17 9 * * 3"
-    - cron: "17 9 * * 5"
+    # Daily, 03:35 UTC (~9:05 AM IST). GitHub cron is UTC-only, runs on best
+    # effort (expect drift, and occasional skipped runs), and queues every
+    # repo's scheduled jobs into the same minute - hence :35 rather than :00.
+    - cron: "35 3 * * *"
   workflow_dispatch:
     inputs:
       topic:
