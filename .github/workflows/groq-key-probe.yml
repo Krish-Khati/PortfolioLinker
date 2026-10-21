@@ -1,0 +1,31 @@
+name: groq-key-probe
+
+# Temporary diagnostic: confirms the CI provider secrets work from a runner.
+# Removed again once it has run.
+
+on:
+  push:
+    branches: ["probe/groq-key"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe the provider keys
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_TEST_OLD_KEY: ${{ secrets.GROQ_TEST_OLD_KEY }}
+        run: |
+          for label in GROQ_API_KEY GROQ_TEST_OLD_KEY; do
+            key="${!label}"
+            code=$(curl -s -o /tmp/out.json -w "%{http_code}" \
+              -H "Authorization: Bearer $key" \
+              "https://api.groq.com/openai/v1/models")
+            echo "$label -> $code"
+            head -c 120 /tmp/out.json; echo
+          done
