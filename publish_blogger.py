@@ -7,8 +7,8 @@ default in .env is false. It:
   1. reads a saved draft from drafts/
   2. re-runs the quality gate (a draft that passed once may not pass now)
   3. refuses to publish if any fabrication tripwire fires
-  4. resolves the image to a usable URL (see _pixabay_public_url for why this
-     is a hotlink and not a Blogger upload)
+  4. embeds the image in the post body (see _image_data_uri for why the
+     image travels with the post instead of being hotlinked)
   5. creates the post as a Blogger DRAFT, or publishes only when explicitly told
 
     python publish_blogger.py --draft drafts/<file>.json              # to drafts
@@ -50,6 +50,16 @@ from config import BLOGGER_API, BLOGGER_SCOPE, ROOT
 GATE_RECHECK_ATTEMPTS = 3
 
 
+# The largest image we are willing to embed in a post body.
+#
+# base64 is 4/3 of the binary, so this is roughly a 900 KB post body. Blogger
+# takes a megabyte of HTML per post, and the images this pipeline downloads
+# are 1280px wide at q=82, which lands between 40 KB and 150 KB. The cap is
+# here so a pathological image fails the publish instead of silently
+# producing a post the API rejects.
+MAX_EMBEDDED_IMAGE_BYTES = 700 * 1024
+
+
 # ------------------------------------------------------------------- oauth
 def blogger_service():
     from google.auth.transport.requests import Request
@@ -69,66 +79,55 @@ def blogger_service():
 
 
 # ------------------------------------------------------------------- image
-def _pixabay_public_url(path: Path) -> str:
-    """Return the image's own public CDN URL, verified reachable.
+def _image_data_uri(path: Path) -> str:
+    """Return the hero image as a self-contained data URI.
 
-    Why this exists instead of an upload: Blogger's v3 API has no media upload
-    method, and the endpoint the web UI used to use for it is gone. The old
-    code scraped a form token out of
-    https://www.blogger.com/blogs.g?blogId=... and POSTed to
-    blogger.google.com/api/upload/<token>. That page now returns a hard 404,
-    so the upload path could never run. The replacement upload service
-    (content-push.googleapis.com/upload/blogger[/resumable]) answers every
-    request with "Request without ClientId (Feed name)", because the feed name
-    it wants is an ephemeral per-session value only the SPA bootstrap knows.
+    Why not hotlink the image, the way this used to:
 
-    So we point the post at the image's canonical public URL instead. The file
-    was downloaded from that same URL, so the bytes in the post are the exact
-    bytes we validated. This is hotlinking, not a copy into Blogger's media
-    store: if that host ever stops serving it, the post keeps its alt text but
-    loses the picture.
+    Pixabay hands out /get/<hash> URLs, and they are NOT permanent. The hash
+    changes on every API response - the same photo fetched twice gets two
+    different URLs - and the old ones die. Measured on this repo's own image
+    cache: 13 of the 14 recorded URLs were already dead (HTTP 400) a few days
+    after they were fetched. A post that hotlinks one of them keeps its
+    text and loses its picture, a few days after it was published.
+
+    Blogger's v3 API has no media upload method, so the image cannot be
+    copied into Blogger's own store. Embedding it in the post body is the
+    remaining way to make the post self-contained: the bytes are the exact
+    bytes that were downloaded and validated here, they travel with the
+    post, and nothing can expire them.
+
+    The cost is size: base64 is 4/3 of the binary, so a 50 KB image becomes
+    a 67 KB data URI. That is well inside Blogger's limits, and far cheaper
+    than a blog whose images all break.
+
+    The original Pixabay URL stays in the sidecar next to the image, so the
+    provenance of every picture is still recorded.
     """
-    import urllib.request
+    import base64
+    import mimetypes
 
-    meta_path = path.with_suffix(".json")
-    url = ""
-    if meta_path.exists():
-        try:
-            url = json.loads(meta_path.read_text(encoding="utf-8")).get(
-                "source_url", "") or ""
-        except (json.JSONDecodeError, OSError):
-            url = ""
-    if not url:
+    if not path.exists():
+        raise SystemExit(f"[!] image not found: {path}")
+
+    raw = path.read_bytes()
+    if len(raw) > MAX_EMBEDDED_IMAGE_BYTES:
         raise SystemExit(
-            f"[!] no public image URL available for {path.name}.\n"
-            "    Blogger has no upload API and this image has no recorded\n"
-            "    source_url. Re-fetch it with fetch_image.py. "
-            "Nothing was published.")
+            f"[!] {path.name} is {len(raw) / 1e6:.1f} MB, over the "
+            f"{MAX_EMBEDDED_IMAGE_BYTES / 1e6:.1f} MB limit for an embedded "
+            f"image. Nothing was published.")
 
-    # Pixabay's CDN rejects a bare HEAD (403) but serves fine to a normal
-    # client, so check with a browser-ish User-Agent before we commit to it.
-    req = urllib.request.Request(url, method="HEAD", headers={
-        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/124.0 Safari/537.36"),
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            ctype = resp.headers.get("Content-Type", "")
-    except Exception as exc:  # noqa: BLE001
-        raise SystemExit(
-            f"[!] image URL for {path.name} is not reachable "
-            f"({exc.__class__.__name__}). Nothing was published.")
+    mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+    if not mime.startswith("image/"):
+        raise SystemExit(f"[!] {path.name} is not an image ({mime}). "
+                         "Nothing was published.")
 
-    if not ctype.startswith("image/"):
-        raise SystemExit(
-            f"[!] image URL for {path.name} returned {ctype!r}, not an "
-            "image. Nothing was published.")
-
-    print(f"[ok] {path.name} -> {url}")
-    print("     [note] hotlinked from its public CDN URL; Blogger's own "
-          "upload endpoint no longer exists")
-    return url
+    encoded = base64.b64encode(raw).decode("ascii")
+    print(f"[ok] embedded {path.name} ({len(raw) / 1024:.0f} KB -> "
+          f"{len(encoded) / 1024:.0f} KB base64)")
+    print("     [note] the image travels inside the post; it cannot expire "
+          "the way a Pixabay hotlink does")
+    return f"data:{mime};base64,{encoded}"
 
 
 # ------------------------------------------------------------------- post
@@ -254,7 +253,7 @@ def main() -> int:
         img_path = config.IMAGES_DIR / image["filename"]
         if not img_path.exists():
             raise SystemExit(f"[!] image not found: {img_path}")
-        image_url = _pixabay_public_url(img_path)
+        image_url = _image_data_uri(img_path)
 
     body = build_request_body(post, image_url, image, publish_now)
     print(f"\n[info] {'PUBLISHING' if publish_now else 'creating DRAFT'}: "

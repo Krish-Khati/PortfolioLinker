@@ -60,7 +60,12 @@ def _sub_link(match: re.Match, links: dict[str, tuple[str, str]]) -> str:
 
 
 def to_html(post: dict[str, Any], image_url: str, image: dict[str, Any] | None) -> str:
-    """Render the post body. image_url must already be a hosted URL."""
+    """Render the post body.
+
+    image_url is whatever should go in the <img src>. For a published post
+    that is a self-contained data URI (see publish_blogger._image_data_uri),
+    for a local preview it is the path of the file on disk.
+    """
     links = resolve_links(post)
 
     parts: list[str] = []

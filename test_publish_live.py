@@ -21,6 +21,7 @@ The rule these tests pin down:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -31,6 +32,7 @@ import config
 import fabrication
 import publish_blogger as PB
 import quality_gate as Q
+import render
 
 PASSES, FAILS = 0, 0
 
@@ -129,7 +131,7 @@ def run_publish(draft: Path, *, publish: bool, live: bool,
         return FakeService(log)
 
     _svc = PB.blogger_service
-    _url = PB._pixabay_public_url
+    _url = PB._image_data_uri
     _gate = Q.check
     _scan = fabrication.scan_all
     _record = PB.ledger.record
@@ -137,7 +139,7 @@ def run_publish(draft: Path, *, publish: bool, live: bool,
     _live = os.environ.get("PUBLISH_LIVE")
 
     PB.blogger_service = fake_service
-    PB._pixabay_public_url = lambda path: "https://cdn.fake/image.jpg"
+    PB._image_data_uri = lambda path: "data:image/jpeg;base64,QUJD"
     Q.check = lambda post, image, attempts=1: gate_result
     fabrication.scan_all = lambda post, kind=None: {"clean": True,
                                                      "findings": [], "count": 0}
@@ -154,7 +156,7 @@ def run_publish(draft: Path, *, publish: bool, live: bool,
             rc = f"SystemExit: {exc}"
     finally:
         PB.blogger_service = _svc
-        PB._pixabay_public_url = _url
+        PB._image_data_uri = _url
         Q.check = _gate
         fabrication.scan_all = _scan
         PB.ledger.record = _record
@@ -273,6 +275,59 @@ try:
         check("the gate was asked twice", asked["n"], 2)
     finally:
         config.chat = real_chat
+
+    print("\n8. the image travels inside the post, not as a hotlink")
+    # Pixabay's /get/ URLs die within days: 13 of the 14 URLs recorded in
+    # this repo's own image cache were already dead (HTTP 400) a few days
+    # after they were fetched. A post that hotlinks one keeps its text and
+    # loses its picture, so the image is embedded instead.
+    jpg = tmp / "hero.jpg"
+    jpg.write_bytes(b"\xff\xd8\xff\xdb" + b"\x00" * 64 + b"\xff\xd9")
+    uri = PB._image_data_uri(jpg)
+    check_true("the URI is a data URI", uri.startswith("data:image/jpeg;base64,"))
+    check_true("it carries the bytes",
+               base64.b64decode(uri.split(",", 1)[1]).startswith(b"\xff\xd8"))
+
+    body = render.to_html(POST, uri, None)
+    audit = render.audit(body)
+    check("the rendered body has the image", audit["has_img"], True)
+    check("and it still has its alt text", audit["img_has_alt"], True)
+    check("and exactly two links", audit["link_count"], 2)
+    check_true("no Pixabay hotlink is left in the body",
+               "pixabay.com" not in body)
+
+    rc, log = run_publish(write_draft(tmp), publish=True, live=True,
+                          gate_result=gate(True, PASS_HIST))
+    check("the publish went ahead", rc, 0)
+
+    # now the same publish, but with an image attached to the draft
+    hero = config.IMAGES_DIR / "test-hero.jpg"
+    hero.write_bytes(b"\xff\xd8\xff\xdb" + b"\x00" * 64 + b"\xff\xd9")
+    try:
+        with_image = dict(POST)
+        with_image["_image"] = {"filename": hero.name, "id": 1, "width": 1280,
+                                 "height": 850, "tags": "test",
+                                 "search_query": "test"}
+        rc2, log2 = run_publish(write_draft(tmp, with_image), publish=True,
+                                live=True, gate_result=gate(True, PASS_HIST))
+        check("the publish with an image went ahead", rc2, 0)
+        content = log2[0].get("body", {}).get("content", "")
+        check_true("the body Blogger received carries the embedded image",
+                   "data:image/jpeg;base64," in content)
+        check_true("and no Pixabay hotlink survived",
+                   "pixabay.com" not in content)
+    finally:
+        hero.unlink(missing_ok=True)
+
+    print("\n9. an image that is too big to embed fails the publish")
+    big = tmp / "big.jpg"
+    big.write_bytes(b"\xff\xd8" + b"\x00" * (PB.MAX_EMBEDDED_IMAGE_BYTES + 10))
+    try:
+        PB._image_data_uri(big)
+        check("an oversized image is refused", "no raise", "SystemExit")
+    except SystemExit as exc:
+        check_true("an oversized image is refused",
+                   "over the" in str(exc))
 finally:
     pass
 

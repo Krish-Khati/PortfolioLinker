@@ -51,8 +51,20 @@ def all_posts() -> list[dict[str, Any]]:
     return load()["posts"]
 
 
+def is_live(post: dict[str, Any]) -> bool:
+    """True if this post is (or was) actually published.
+
+    A post that was deleted from Blogger never lived on the blog, so it must
+    not hold anything hostage: its topic is free to be written again and its
+    anchor text is free to be reused. That is what the "deleted" status is
+    for - it records the truth without pretending the post existed.
+    """
+    return str(post.get("status", "")).lower() != "deleted"
+
+
 def used_topic_keys() -> list[set[str]]:
-    return [_norm(p.get("topic", "")) for p in all_posts() if p.get("topic")]
+    return [_norm(p.get("topic", "")) for p in all_posts()
+            if p.get("topic") and is_live(p)]
 
 
 def too_similar(new_topic: str, threshold: float = 0.55) -> str | None:
@@ -77,6 +89,8 @@ def recent_anchors(n: int = 5) -> list[str]:
     """Anchor text used in the last n posts — the generator must avoid these."""
     out: list[str] = []
     for post in all_posts()[-n:]:
+        if not is_live(post):
+            continue
         for link in post.get("backlinks", []) or []:
             anchor = (link.get("anchor") or "").strip()
             if anchor:
@@ -94,7 +108,11 @@ def anchor_used(anchor: str, lookback: int = 5) -> bool:
 
 # Lifecycle order. A second record for the same post must never demote it
 # back to "draft" just because it was written earlier.
-_STATUS_RANK = {"draft": 0, "blogger-draft": 1, "published": 2}
+#
+# "deleted" ranks lowest: the post was deleted from Blogger, so it never
+# lived on the blog. A fresh record for the same topic supersedes it and
+# takes the row back to a normal lifecycle.
+_STATUS_RANK = {"deleted": -1, "draft": 0, "blogger-draft": 1, "published": 2}
 
 _EMPTY = (None, "", [], {})
 
@@ -128,6 +146,14 @@ def _merge(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
         if v in _EMPTY:
             continue                      # never blank out a real value
         out[k] = v
+
+    # A deleted post's Blogger id and URL point at something that no longer
+    # exists. If this row is being brought back to life by a new record, do
+    # not carry those dead values forward with it.
+    if str(old.get("status", "")).lower() == "deleted" and new:
+        for stale in ("url", "blogger_post_id"):
+            if stale not in new and stale in out:
+                out.pop(stale)
     return out
 
 
@@ -157,6 +183,35 @@ def record(post: dict[str, Any]) -> None:
     posts.append(entry)
     save(data)
     print(f"[ok] recorded -> {LEDGER_PATH.name} ({len(posts)} total)")
+
+
+def mark_deleted(blogger_post_id: str, note: str = "") -> int:
+    """Mark the post with this Blogger id as deleted. Returns rows changed.
+
+    A post can be deleted from the Blogger dashboard by hand, outside this
+    system, and then the ledger is lying: it says "published" for something
+    that is not on the blog. This records the truth.
+
+    The row keeps its Blogger id and URL, so there is still an audit trail of
+    what used to be there, but the topic and the anchor text are released.
+    Nobody ever read those, so they are free to use again.
+
+    This is deliberately not done through record(): that function's rule is
+    that a record never demotes a post, and a deletion is exactly that - a
+    correction from outside the normal lifecycle, not a stage in it.
+    """
+    data = load()
+    posts = data["posts"]
+    changed = 0
+    for p in posts:
+        if str(p.get("blogger_post_id", "")) == str(blogger_post_id):
+            p["status"] = "deleted"
+            if note:
+                p["note"] = note
+            changed += 1
+    if changed:
+        save(data)
+    return changed
 
 
 def dedupe() -> int:

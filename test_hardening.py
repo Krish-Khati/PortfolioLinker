@@ -417,6 +417,41 @@ try:
           L.all_posts()[0].get("status"), "published")
     check("still one entry", len(L.all_posts()), 1)
 
+    print("\na deleted post frees its topic and its anchors")
+    # Five published posts were deleted from the Blogger dashboard. They never
+    # lived on the blog, so they must not hold their topics hostage: the
+    # pipeline should be free to write about them again, and free to reuse
+    # their anchor text.
+    _DEL_NOTE = "deleted from the Blogger dashboard - never lived on the blog"
+    L.record({"topic": "How to structure sitemaps", "slug": "structure-sitemaps",
+              "title": "How to structure sitemaps", "blogger_post_id": "999",
+              "url": "https://x/1", "status": "published"})
+    check("published again", L.all_posts()[0].get("status"), "published")
+    check("the deletion was recorded",
+          L.mark_deleted("999", _DEL_NOTE), 1)
+    check("the status is recorded", L.all_posts()[0].get("status"), "deleted")
+    check("the note is kept", L.all_posts()[0].get("note"), _DEL_NOTE)
+    check("the blogger id is kept for the audit trail",
+          L.all_posts()[0].get("blogger_post_id"), "999")
+    check("its topic is free again",
+          L.too_similar("How to structure sitemaps"), None)
+    check("its anchors are free again",
+          L.anchor_used("the finished work"), False)
+
+    # a fresh record for the same topic brings the row back to life
+    L.record({"topic": "How to structure sitemaps", "slug": "structure-sitemaps",
+              "title": "How to structure sitemaps", "status": "draft"})
+    _revived = L.all_posts()[0]
+    check("a new record revives the row", _revived.get("status"), "draft")
+    check("the dead blogger id does not come back",
+          _revived.get("blogger_post_id"), None)
+    check("the dead url does not come back", _revived.get("url"), None)
+    check("and its topic is held again",
+          L.too_similar("How to structure sitemaps") is not None, True)
+    L.record(_P)
+    check("publishing it again escalates normally",
+          L.all_posts()[0].get("status"), "published")
+
     L.record({"topic": "A different topic", "slug": "other", "status": "draft"})
     check("a different post is its own entry", len(L.all_posts()), 2)
 
