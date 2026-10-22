@@ -438,6 +438,36 @@ try:
     check("its anchors are free again",
           L.anchor_used("the finished work"), False)
 
+    print("\na topic retired on purpose stays blocked for good")
+    # mark_deleted() releases a topic because the post never lived. Some
+    # posts were deleted AND deliberately retired: the operator wrote them,
+    # read them, and decided the topic was done. Those must stay blocked.
+    L.record({"topic": "A retired topic", "slug": "retired-topic",
+              "title": "A retired topic", "blogger_post_id": "777",
+              "url": "https://x/2", "status": "published"})
+    check("published to start with",
+          [x for x in L.all_posts() if x["slug"] == "retired-topic"][0]
+          .get("status"), "published")
+    check("the retirement was recorded",
+          L.mark_blocked("777", "retired on purpose"), 1)
+    _ret = [x for x in L.all_posts() if x["slug"] == "retired-topic"][0]
+    check("the status is blocked", _ret.get("status"), "blocked")
+    check("the note is kept", _ret.get("note"), "retired on purpose")
+    check("the topic is still blocked",
+          L.too_similar("A retired topic") is not None, True)
+    check("a later plain deletion does not give it back",
+          L.mark_deleted("777", "deleted again"), 0)
+    _ret2 = [x for x in L.all_posts() if x["slug"] == "retired-topic"][0]
+    check("it is still blocked", _ret2.get("status"), "blocked")
+    check("and the topic is still blocked",
+          L.too_similar("A retired topic") is not None, True)
+    check("a routine record cannot un-retire it either", True, True)
+    L.record({"topic": "A retired topic", "slug": "retired-topic",
+              "title": "A retired topic", "status": "draft"})
+    _ret3 = [x for x in L.all_posts() if x["slug"] == "retired-topic"][0]
+    check("still blocked after a routine record",
+          _ret3.get("status"), "blocked")
+
     # a fresh record for the same topic brings the row back to life
     L.record({"topic": "How to structure sitemaps", "slug": "structure-sitemaps",
               "title": "How to structure sitemaps", "status": "draft"})
@@ -453,7 +483,7 @@ try:
           L.all_posts()[0].get("status"), "published")
 
     L.record({"topic": "A different topic", "slug": "other", "status": "draft"})
-    check("a different post is its own entry", len(L.all_posts()), 2)
+    check("a different post is its own entry", len(L.all_posts()), 3)
 
     L.record({"topic": "A different topic", "slug": "other", "title": "",
               "url": None})

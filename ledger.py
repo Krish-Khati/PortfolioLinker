@@ -51,20 +51,29 @@ def all_posts() -> list[dict[str, Any]]:
     return load()["posts"]
 
 
-def is_live(post: dict[str, Any]) -> bool:
-    """True if this post is (or was) actually published.
+# Statuses that RELEASE a topic and its anchor text.
+#
+# "deleted" - the post was deleted from Blogger and never lived, so nothing
+#             was ever published under that topic and the pipeline is free
+#             to write about it again.
+# "blocked" - the same, except the topic was retired ON PURPOSE. It stays
+#             blocked for good, so a plain deletion must not quietly give
+#             it back.
+_RELEASED = {"deleted"}
 
-    A post that was deleted from Blogger never lived on the blog, so it must
-    not hold anything hostage: its topic is free to be written again and its
-    anchor text is free to be reused. That is what the "deleted" status is
-    for - it records the truth without pretending the post existed.
+
+def holds_topic(post: dict[str, Any]) -> bool:
+    """True if this post still holds its topic and its anchor text.
+
+    A post that was deleted from Blogger never lived on the blog, so by
+    default it releases both. A post that was retired on purpose does not.
     """
-    return str(post.get("status", "")).lower() != "deleted"
+    return str(post.get("status", "")).lower() not in _RELEASED
 
 
 def used_topic_keys() -> list[set[str]]:
     return [_norm(p.get("topic", "")) for p in all_posts()
-            if p.get("topic") and is_live(p)]
+            if p.get("topic") and holds_topic(p)]
 
 
 def too_similar(new_topic: str, threshold: float = 0.55) -> str | None:
@@ -89,7 +98,7 @@ def recent_anchors(n: int = 5) -> list[str]:
     """Anchor text used in the last n posts — the generator must avoid these."""
     out: list[str] = []
     for post in all_posts()[-n:]:
-        if not is_live(post):
+        if not holds_topic(post):
             continue
         for link in post.get("backlinks", []) or []:
             anchor = (link.get("anchor") or "").strip()
@@ -112,7 +121,11 @@ def anchor_used(anchor: str, lookback: int = 5) -> bool:
 # "deleted" ranks lowest: the post was deleted from Blogger, so it never
 # lived on the blog. A fresh record for the same topic supersedes it and
 # takes the row back to a normal lifecycle.
-_STATUS_RANK = {"deleted": -1, "draft": 0, "blogger-draft": 1, "published": 2}
+#
+# "blocked" ranks highest: the topic was retired on purpose and must stay
+# retired. A routine record cannot un-retire it.
+_STATUS_RANK = {"deleted": -1, "draft": 0, "blogger-draft": 1, "published": 2,
+                "blocked": 3}
 
 _EMPTY = (None, "", [], {})
 
@@ -150,7 +163,7 @@ def _merge(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     # A deleted post's Blogger id and URL point at something that no longer
     # exists. If this row is being brought back to life by a new record, do
     # not carry those dead values forward with it.
-    if str(old.get("status", "")).lower() == "deleted" and new:
+    if str(old.get("status", "")).lower() in ("deleted", "blocked") and new:
         for stale in ("url", "blogger_post_id"):
             if stale not in new and stale in out:
                 out.pop(stale)
@@ -196,6 +209,10 @@ def mark_deleted(blogger_post_id: str, note: str = "") -> int:
     what used to be there, but the topic and the anchor text are released.
     Nobody ever read those, so they are free to use again.
 
+    A row that was retired on purpose (status "blocked") is left alone: a
+    plain deletion must not quietly hand a deliberately retired topic back.
+    Use mark_blocked() for those.
+
     This is deliberately not done through record(): that function's rule is
     that a record never demotes a post, and a deletion is exactly that - a
     correction from outside the normal lifecycle, not a stage in it.
@@ -205,7 +222,36 @@ def mark_deleted(blogger_post_id: str, note: str = "") -> int:
     changed = 0
     for p in posts:
         if str(p.get("blogger_post_id", "")) == str(blogger_post_id):
+            if str(p.get("status", "")).lower() == "blocked":
+                print(f"[ok] {blogger_post_id} is blocked - left as it is")
+                continue
             p["status"] = "deleted"
+            if note:
+                p["note"] = note
+            changed += 1
+    if changed:
+        save(data)
+    return changed
+
+
+def mark_blocked(blogger_post_id: str, note: str = "") -> int:
+    """Retire this post's topic for good. Returns rows changed.
+
+    The post is gone from Blogger, and the topic is staying gone: it was
+    written and then deleted, and the decision was made not to come back to
+    it. The pipeline must not select that topic again, and its anchor text
+    must not be reused either.
+
+    Unlike mark_deleted(), this does not release the topic. Use it for the
+    posts an operator retired on purpose; use mark_deleted() for the ones
+    that were only cleaned up.
+    """
+    data = load()
+    posts = data["posts"]
+    changed = 0
+    for p in posts:
+        if str(p.get("blogger_post_id", "")) == str(blogger_post_id):
+            p["status"] = "blocked"
             if note:
                 p["note"] = note
             changed += 1
