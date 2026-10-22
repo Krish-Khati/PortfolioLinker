@@ -1,7 +1,7 @@
 name: draft-post
 
-# Runs the PortfolioLinker pipeline on a schedule and on demand, and publishes
-# automatically when - and only when - the draft clears the quality gate.
+# Runs the PortfolioLinker pipeline on demand, and publishes automatically
+# when - and only when - the draft clears the quality gate.
 #
 # The gate is the only thing standing between an automated blog and an
 # automated mistake, so nothing here relaxes it. A draft that does not pass is
@@ -16,11 +16,6 @@ name: draft-post
 # stays false so local testing is still draft-only by default.
 
 on:
-  schedule:
-    # Daily, 03:35 UTC (~9:05 AM IST). GitHub cron is UTC-only, runs on best
-    # effort (expect drift, and occasional skipped runs), and queues every
-    # repo's scheduled jobs into the same minute - hence :35 rather than :00.
-    - cron: "35 3 * * *"
   workflow_dispatch:
     inputs:
       topic:
